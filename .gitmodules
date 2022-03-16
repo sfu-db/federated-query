@@ -1,0 +1,3 @@
+[submodule "connector-x"]
+	path = connector-x
+	url = git@github.com:sfu-db/connector-x.git
