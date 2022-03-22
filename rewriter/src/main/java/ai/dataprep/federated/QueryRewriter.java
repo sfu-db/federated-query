@@ -1,5 +1,6 @@
 package ai.dataprep.federated;
 
+import java.io.PrintWriter;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.util.Collections;
@@ -9,12 +10,14 @@ import javax.sql.DataSource;
 
 import org.apache.calcite.adapter.enumerable.EnumerableConvention;
 import org.apache.calcite.adapter.enumerable.EnumerableRel;
+import org.apache.calcite.adapter.jdbc.JdbcConvention;
 import org.apache.calcite.adapter.jdbc.JdbcSchema;
 import org.apache.calcite.config.CalciteConnectionConfig;
 import org.apache.calcite.config.CalciteConnectionConfigImpl;
 import org.apache.calcite.config.CalciteConnectionProperty;
 import org.apache.calcite.jdbc.CalciteConnection;
 import org.apache.calcite.jdbc.CalciteSchema;
+import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.plan.ConventionTraitDef;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptTable;
@@ -23,9 +26,11 @@ import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.prepare.CalciteCatalogReader;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter;
+import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.schema.SchemaPlus;
+import org.apache.calcite.schema.Schemas;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlExplainFormat;
 import org.apache.calcite.sql.SqlExplainLevel;
@@ -39,8 +44,9 @@ import org.apache.calcite.sql2rel.SqlToRelConverter;
 import org.apache.calcite.sql2rel.StandardConvertletTable;
 
 public class QueryRewriter {
+
     private static final RelOptTable.ViewExpander NOOP_EXPANDER = (type, query,
-            schema, path) -> null;
+                                                                   schema, path) -> null;
 
     public static void main(String[] args) throws Exception {
         String sql = args[0];
@@ -106,45 +112,30 @@ public class QueryRewriter {
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
         // Initialize optimizer/planner with the necessary rules
-        // RelOptUtil.registerDefaultRules(planner, false, true);
-        // planner.addRule(CoreRules.PROJECT_TO_CALC);
-        // planner.addRule(CoreRules.FILTER_TO_CALC);
-        // planner.addRule(EnumerableRules.ENUMERABLE_CALC_RULE);
-        // planner.addRule(EnumerableRules.ENUMERABLE_JOIN_RULE);
-        // planner.addRule(EnumerableRules.ENUMERABLE_SORT_RULE);
-        // planner.addRule(EnumerableRules.ENUMERABLE_LIMIT_RULE);
-        // planner.addRule(EnumerableRules.ENUMERABLE_AGGREGATE_RULE);
-        // planner.addRule(EnumerableRules.ENUMERABLE_VALUES_RULE);
-        // planner.addRule(EnumerableRules.ENUMERABLE_UNION_RULE);
-        // planner.addRule(EnumerableRules.ENUMERABLE_MINUS_RULE);
-        // planner.addRule(EnumerableRules.ENUMERABLE_INTERSECT_RULE);
-        // planner.addRule(EnumerableRules.ENUMERABLE_MATCH_RULE);
-        // planner.addRule(EnumerableRules.ENUMERABLE_WINDOW_RULE);
-        // planner.addRule(EnumerableRules.ENUMERABLE_TABLE_SCAN_RULE);
+        planner.addRule(CoreRules.FILTER_INTO_JOIN); // necessary to enable JDBCJoinRule
 
         // Define the type of the output plan (in this case we want a physical plan in
         // EnumerableConvention)
-        logPlan = planner.changeTraits(logPlan,
-                cluster.traitSet().replace(EnumerableConvention.INSTANCE));
-        SqlDialect dialect = SqlDialect.DatabaseProduct.POSTGRESQL.getDialect();
-        // Expression expression = Schemas.subSchemaExpression(rootSchema, "DB1",
-        // JdbcSchema.class);
-        // JdbcConvention convention = JdbcConvention.of(dialect, expression, "DB1");
-        // System.out.println("rules:" + planner.getRules());
-        // logPlan = planner.changeTraits(logPlan,
-        // cluster.traitSet().replace(convention));
+        logPlan = planner.changeTraits(logPlan, cluster.traitSet().replace(EnumerableConvention.INSTANCE));
 
         planner.setRoot(logPlan);
-        System.out.println("====rules:" + planner.getRules());
-
-        System.out.println("gettraits: " + planner.getRelTraitDefs());
 
         // Start the optimization process to obtain the most efficient physical plan
+        System.out.println(
+                RelOptUtil.dumpPlan("[Logical plan before optimize]", logPlan, SqlExplainFormat.TEXT,
+                        SqlExplainLevel.ALL_ATTRIBUTES));
         EnumerableRel phyPlan = (EnumerableRel) planner.findBestExp();
+
+        // Print planner info in graph
+//        PrintWriter pw = new PrintWriter(System.out, true);
+//        planner.dump(pw);
+
         System.out.println(
                 RelOptUtil.dumpPlan("[Physical plan]", phyPlan, SqlExplainFormat.TEXT,
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
+        // Configure RelToSqlConverter
+        SqlDialect dialect = SqlDialect.DatabaseProduct.POSTGRESQL.getDialect();
         RelToSqlConverter sqlConverter = new RelToSqlConverter(dialect);
 
         // Convert physical plan to sql
@@ -153,7 +144,6 @@ public class QueryRewriter {
         String resSql = resSqlNode.toSqlString(dialect).getSql();
 
         return resSql;
-        // return sql;
     }
 
 }
