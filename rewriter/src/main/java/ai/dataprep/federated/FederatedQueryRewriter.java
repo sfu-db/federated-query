@@ -150,8 +150,21 @@ public class FederatedQueryRewriter {
                 RelOptUtil.dumpPlan("[Physical plan]", phyPlan, SqlExplainFormat.TEXT,
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
-        DBSourceVisitor visitor = new DBSourceVisitor();
+        DBSourceVisitor visitor = new DBSourceVisitor(cluster);
         phyPlan.childrenAccept(visitor);
+
+        System.out.println(
+                RelOptUtil.dumpPlan("[Final physical plan]", phyPlan, SqlExplainFormat.TEXT,
+                        SqlExplainLevel.EXPPLAN_ATTRIBUTES));
+
+        // Configure RelToSqlConverter
+        SqlDialect dialect = SqlDialect.DatabaseProduct.POSTGRESQL.getDialect();
+        RelToSqlConverter sqlConverter = new RelToSqlConverter(dialect);
+
+        // Convert physical plan to sql
+        RelToSqlConverter.Result res = sqlConverter.visitInput(phyPlan, 0);
+        SqlNode resSqlNode = res.asQueryOrValues();
+        String resSql = resSqlNode.toSqlString(dialect).getSql();
 
         return visitor.dbList;
     }
@@ -159,6 +172,12 @@ public class FederatedQueryRewriter {
     private class DBSourceVisitor extends RelVisitor {
 
         private List<DBExecInfo> dbList = new ArrayList<DBExecInfo>();
+        private RelOptCluster cluster;
+
+        public DBSourceVisitor(RelOptCluster cluster) {
+            this.cluster = cluster;
+        }
+
         @Override public void visit(RelNode node, int ordinal, @Nullable RelNode parent) {
             if (node instanceof JdbcToEnumerableConverter) {
                 // Convert subtree to sql, do not go deeper
@@ -173,6 +192,10 @@ public class FederatedQueryRewriter {
                 String dbName = jdbcConvention.getName().substring(5); // remove prefix "JDBC:"
                 DBExecInfo info = new DBExecInfo(dbName, resSql);
                 dbList.add(info);
+
+                LocalTable table = new LocalTable(Collections.singletonList(dbName));
+                EnumerableTableScan scan = EnumerableTableScan.create(cluster, table);
+                parent.replaceInput(ordinal, scan);
             }
             else {
                 // Traverse child node
