@@ -196,8 +196,6 @@ public class FederatedQueryRewriter {
                 DBExecInfo info = new DBExecInfo(dbName, resSql);
                 dbList.add(info);
 
-                child.getRowType();
-
                 LocalTable table = new LocalTable(Collections.singletonList(dbName), child.getRowType());
                 EnumerableTableScan scan = EnumerableTableScan.create(cluster, table);
                 parent.replaceInput(ordinal, scan);
