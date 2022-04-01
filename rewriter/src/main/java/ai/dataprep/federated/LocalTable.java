@@ -1,6 +1,5 @@
 package ai.dataprep.federated;
 
-import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
 import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.plan.RelOptSchema;
 import org.apache.calcite.plan.RelOptTable;
@@ -9,7 +8,6 @@ import org.apache.calcite.rel.RelDistribution;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelReferentialConstraint;
 import org.apache.calcite.rel.type.RelDataType;
-import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.schema.ColumnStrategy;
 import org.apache.calcite.util.ImmutableBitSet;
@@ -19,9 +17,11 @@ import java.util.List;
 
 public class LocalTable implements RelOptTable {
     List<String> name;
+    RelDataType rowType;
 
-    public LocalTable(List<String> name) {
+    public LocalTable(List<String> name, RelDataType rowType) {
         this.name = name;
+        this.rowType = rowType;
     }
 
     @Override
@@ -36,9 +36,7 @@ public class LocalTable implements RelOptTable {
 
     @Override
     public RelDataType getRowType() {
-        RelDataTypeFactory typeFactory = new JavaTypeFactoryImpl();
-        RelDataTypeFactory.Builder builder = new RelDataTypeFactory.Builder(typeFactory);
-        return builder.build();
+        return rowType;
     }
 
     @Override

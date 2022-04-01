@@ -154,7 +154,7 @@ public class FederatedQueryRewriter {
         phyPlan.childrenAccept(visitor);
 
         System.out.println(
-                RelOptUtil.dumpPlan("[Final physical plan]", phyPlan, SqlExplainFormat.TEXT,
+                RelOptUtil.dumpPlan("[Remaining physical plan]", phyPlan, SqlExplainFormat.TEXT,
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
         // Configure RelToSqlConverter
@@ -166,7 +166,10 @@ public class FederatedQueryRewriter {
         SqlNode resSqlNode = res.asQueryOrValues();
         String resSql = resSqlNode.toSqlString(dialect).getSql();
 
-        return visitor.dbList;
+        List<DBExecInfo> execInfoList = visitor.dbList;
+        execInfoList.add(new DBExecInfo("LOCAL", resSql));
+
+        return execInfoList;
     }
 
     private class DBSourceVisitor extends RelVisitor {
@@ -193,7 +196,9 @@ public class FederatedQueryRewriter {
                 DBExecInfo info = new DBExecInfo(dbName, resSql);
                 dbList.add(info);
 
-                LocalTable table = new LocalTable(Collections.singletonList(dbName));
+                child.getRowType();
+
+                LocalTable table = new LocalTable(Collections.singletonList(dbName), child.getRowType());
                 EnumerableTableScan scan = EnumerableTableScan.create(cluster, table);
                 parent.replaceInput(ordinal, scan);
             }
