@@ -1,5 +1,6 @@
 package ai.dataprep.federated;
 
+import com.mysql.cj.util.StringUtils;
 import org.apache.calcite.adapter.enumerable.*;
 import org.apache.calcite.adapter.java.JavaTypeFactory;
 import org.apache.calcite.adapter.jdbc.*;
@@ -39,6 +40,7 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static java.util.Objects.requireNonNull;
 
@@ -53,12 +55,12 @@ public class FederatedQueryRewriter {
         System.out.println(sql);
 
         FederatedQueryRewriter rewriter = new FederatedQueryRewriter();
-        List<DBExecInfo> dbExecInfos = rewriter.rewrite(sql);
+        FederatedPlan plan = rewriter.rewrite(sql);
         System.out.println("[Rewrite]");
-        dbExecInfos.forEach(t -> System.out.println(t.getDbName() + ": " + t.getSql() + ";\n"));
+        System.out.println(plan);
     }
 
-    public List<DBExecInfo> rewrite(String sql) throws Exception {
+    public FederatedPlan rewrite(String sql) throws Exception {
         // Parse the query into an AST
         SqlParser parser = SqlParser.create(sql);
         SqlNode sqlNode = parser.parseQuery();
@@ -166,15 +168,15 @@ public class FederatedQueryRewriter {
         SqlNode resSqlNode = res.asQueryOrValues();
         String resSql = resSqlNode.toSqlString(dialect).getSql();
 
-        List<DBExecInfo> execInfoList = visitor.dbList;
-        execInfoList.add(new DBExecInfo("LOCAL", resSql));
+        FederatedPlan plan = visitor.plan;
+        plan.add(new DBExecInfo("LOCAL", resSql));
 
-        return execInfoList;
+        return plan;
     }
 
     private class DBSourceVisitor extends RelVisitor {
 
-        private List<DBExecInfo> dbList = new ArrayList<DBExecInfo>();
+        private FederatedPlan plan = new FederatedPlan();
         private RelOptCluster cluster;
 
         public DBSourceVisitor(RelOptCluster cluster) {
@@ -194,7 +196,7 @@ public class FederatedQueryRewriter {
                 String resSql = resSqlNode.toSqlString(jdbcConvention.dialect).getSql();
                 String dbName = jdbcConvention.getName().substring(5); // remove prefix "JDBC:"
                 DBExecInfo info = new DBExecInfo(dbName, resSql);
-                dbList.add(info);
+                plan.add(info);
 
                 LocalTable table = new LocalTable(Collections.singletonList(dbName), child.getRowType());
                 EnumerableTableScan scan = EnumerableTableScan.create(cluster, table);
@@ -207,6 +209,31 @@ public class FederatedQueryRewriter {
         }
     }
 
+    public class FederatedPlan {
+        public List<DBExecInfo> plan = new ArrayList<DBExecInfo>();
+
+        public void add(DBExecInfo info) {
+            plan.add(info);
+        }
+
+        public int getCount() {
+            return plan.size();
+        }
+
+        public String getDBName(int idx) {
+            return plan.get(idx).dbName;
+        }
+
+        public String getSql(int idx) {
+            return plan.get(idx).sql;
+        }
+
+        @Override
+        public String toString() {
+            return String.join("\n\n", plan.stream().map(DBExecInfo::toString).collect(Collectors.toList()));
+        }
+    }
+
     public class DBExecInfo {
         public String dbName;
         public String sql;
@@ -216,12 +243,9 @@ public class FederatedQueryRewriter {
             this.sql = sql;
         }
 
-        public String getDbName() {
-            return dbName;
-        }
-
-        public String getSql() {
-            return sql;
+        @Override
+        public String toString() {
+            return dbName + ": " + sql + ";";
         }
     }
 
