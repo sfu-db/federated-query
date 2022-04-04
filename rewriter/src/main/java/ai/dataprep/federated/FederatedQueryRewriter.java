@@ -75,13 +75,13 @@ public class FederatedQueryRewriter {
                 "org.postgresql.Driver",
                 "postgres",
                 "postgres");
-        rootSchema.add("DB1", JdbcSchema.create(rootSchema, "DB1", ds1, null, null));
+        rootSchema.add("db1", JdbcSchema.create(rootSchema, "db1", ds1, null, null));
         final DataSource ds2 = JdbcSchema.dataSource(
                 "jdbc:mysql://127.0.0.1:3306/tpchsf1",
                 "com.mysql.cj.jdbc.Driver",
                 "root",
                 "mysql");
-        rootSchema.add("DB2", JdbcSchema.create(rootSchema, "DB2", ds2, null, null));
+        rootSchema.add("db2", JdbcSchema.create(rootSchema, "db2", ds2, null, null));
 
         // Configure validator
         Properties props = new Properties();
@@ -90,7 +90,7 @@ public class FederatedQueryRewriter {
         CalciteConnectionConfig config = new CalciteConnectionConfigImpl(props);
         SqlTypeFactoryImpl typeFactory = new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
         CalciteCatalogReader catalogReader = new CalciteCatalogReader(CalciteSchema.from(rootSchema),
-                Arrays.asList("DB1", "DB2"),
+                Arrays.asList("db1", "db2"),
                 typeFactory, config);
         SqlValidator validator = SqlValidatorUtil.newValidator(SqlStdOperatorTable.instance(),
                 catalogReader, typeFactory,
@@ -210,7 +210,7 @@ public class FederatedQueryRewriter {
     }
 
     public class FederatedPlan {
-        public List<DBExecInfo> plan = new ArrayList<DBExecInfo>();
+        public List<DBExecInfo> plan = new ArrayList<>();
 
         public void add(DBExecInfo info) {
             plan.add(info);

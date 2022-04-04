@@ -3,4 +3,4 @@ target/
 .env
 .idea
 *.log*
-queries/
+*queries/
