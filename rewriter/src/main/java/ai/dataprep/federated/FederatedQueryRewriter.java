@@ -164,7 +164,7 @@ public class FederatedQueryRewriter {
         RelToSqlConverter sqlConverter = new RelToSqlConverter(dialect);
 
         // Convert physical plan to sql
-        RelToSqlConverter.Result res = sqlConverter.visitInput(phyPlan, 0);
+        RelToSqlConverter.Result res = sqlConverter.visitRoot(phyPlan);
         SqlNode resSqlNode = res.asQueryOrValues();
         String resSql = resSqlNode.toSqlString(dialect).getSql();
 
