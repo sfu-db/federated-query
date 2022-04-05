@@ -49,7 +49,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>ai.dataprep.federated.QueryRewriter</mainClass>
+                            <mainClass>ai.dataprep.federated.FederatedQueryRewriter</mainClass>
                         </manifest>
                     </archive>
                     <descriptorRefs>

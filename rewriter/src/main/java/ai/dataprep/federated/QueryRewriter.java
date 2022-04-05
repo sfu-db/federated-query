@@ -92,8 +92,6 @@ public class QueryRewriter {
                 catalogReader, typeFactory,
                 SqlValidator.Config.DEFAULT);
 
-//        {"DS1": "postgres://username.../db, ", "DS2": "mysql://.../db"} "select * from DS1.r, DS2.s where ..."
-
         // Validate the initial AST
         SqlNode validNode = validator.validate(sqlNode);
 
@@ -125,6 +123,16 @@ public class QueryRewriter {
         planner.addRule(CoreRules.JOIN_ASSOCIATE);
         planner.addRule(CoreRules.JOIN_COMMUTE);
         planner.addRule(CoreRules.PROJECT_REMOVE);
+        planner.addRule(CoreRules.PROJECT_JOIN_TRANSPOSE);
+        planner.addRule(CoreRules.PROJECT_TABLE_SCAN);
+        planner.addRule(CoreRules.PROJECT_INTERPRETER_TABLE_SCAN);
+        planner.addRule(CoreRules.JOIN_PUSH_TRANSITIVE_PREDICATES);
+//        planner.addRule(CoreRules.PROJECT_SUB_QUERY_TO_CORRELATE);
+//        planner.addRule(CoreRules.FILTER_CORRELATE);
+//        planner.addRule(CoreRules.FILTER_SUB_QUERY_TO_CORRELATE);
+//        planner.addRule(CoreRules.FILTER_SCAN);
+//        planner.addRule(CoreRules.FILTER_INTERPRETER_SCAN);
+//        planner.addRule(CoreRules.JOIN_SUB_QUERY_TO_CORRELATE);
 
 //        planner.addRule(JoinPushThroughJoinRule.RIGHT);
 //        planner.addRule(JoinPushThroughJoinRule.LEFT);

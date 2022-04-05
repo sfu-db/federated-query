@@ -1,14 +1,13 @@
 package ai.dataprep.federated;
 
-import com.mysql.cj.util.StringUtils;
 import org.apache.calcite.adapter.enumerable.*;
-import org.apache.calcite.adapter.java.JavaTypeFactory;
 import org.apache.calcite.adapter.jdbc.*;
 import org.apache.calcite.config.CalciteConnectionConfig;
 import org.apache.calcite.config.CalciteConnectionConfigImpl;
 import org.apache.calcite.config.CalciteConnectionProperty;
 import org.apache.calcite.jdbc.CalciteConnection;
 import org.apache.calcite.jdbc.CalciteSchema;
+import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.plan.ConventionTraitDef;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptTable;
@@ -22,19 +21,18 @@ import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.schema.SchemaPlus;
-import org.apache.calcite.sql.SqlDialect;
-import org.apache.calcite.sql.SqlExplainFormat;
-import org.apache.calcite.sql.SqlExplainLevel;
-import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.schema.Schemas;
+import org.apache.calcite.sql.*;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
-import org.apache.calcite.sql.util.SqlString;
 import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.sql2rel.SqlToRelConverter;
 import org.apache.calcite.sql2rel.StandardConvertletTable;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -48,40 +46,59 @@ public class FederatedQueryRewriter {
 
     private static final RelOptTable.ViewExpander NOOP_EXPANDER = (type, query,
                                                                    schema, path) -> null;
+    private static final Logger logger = LoggerFactory.getLogger(FederatedQueryRewriter.class);
 
     public static void main(String[] args) throws Exception {
+        Logger logger = LoggerFactory.getLogger(FederatedQueryRewriter.class);
+
         String sql = args[0];
-        System.out.println("[Input]");
-        System.out.println(sql);
+        logger.info("[Input]\n{}", sql);
 
         FederatedQueryRewriter rewriter = new FederatedQueryRewriter();
         FederatedPlan plan = rewriter.rewrite(sql);
-        System.out.println("[Rewrite]");
-        System.out.println(plan);
+        logger.info("[Rewrite]\n{}", plan.toString());
+    }
+
+    public static JdbcSchema createJdbcSchema(
+            SchemaPlus parentSchema,
+            String name,
+            DataSource dataSource,
+            @Nullable String catalog,
+            @Nullable String schema) {
+        SqlDialectFactory dialectFactory = SqlDialectFactoryImpl.INSTANCE;
+        final Expression expression =
+                Schemas.subSchemaExpression(parentSchema, name, JdbcSchema.class);
+        final SqlDialect dialect = JdbcSchema.createDialect(dialectFactory, dataSource);
+        final JdbcConvention convention =
+                new RemoteJdbcConvention(dialect, expression, name);
+        return new JdbcSchema(dataSource, dialect, convention, catalog, schema);
     }
 
     public FederatedPlan rewrite(String sql) throws Exception {
+
         // Parse the query into an AST
         SqlParser parser = SqlParser.create(sql);
         SqlNode sqlNode = parser.parseQuery();
-        System.out.println("[Parsed query]\n" + sqlNode.toString());
+        logger.debug("[Parsed query]\n{}", sqlNode.toString());
 
         // Configure connection and schema via JDBC
         Connection connection = DriverManager.getConnection("jdbc:calcite:");
         final CalciteConnection calciteConnection = connection.unwrap(CalciteConnection.class);
         final SchemaPlus rootSchema = calciteConnection.getRootSchema();
+
+
         final DataSource ds1 = JdbcSchema.dataSource(
                 "jdbc:postgresql://127.0.0.1:5432/tpchsf1",
                 "org.postgresql.Driver",
                 "postgres",
                 "postgres");
-        rootSchema.add("db1", JdbcSchema.create(rootSchema, "db1", ds1, null, null));
+        rootSchema.add("db1", createJdbcSchema(rootSchema, "db1", ds1, null, null));
         final DataSource ds2 = JdbcSchema.dataSource(
                 "jdbc:mysql://127.0.0.1:3306/tpchsf1",
                 "com.mysql.cj.jdbc.Driver",
                 "root",
                 "mysql");
-        rootSchema.add("db2", JdbcSchema.create(rootSchema, "db2", ds2, null, null));
+        rootSchema.add("db2", createJdbcSchema(rootSchema, "db2", ds2, null, null));
 
         // Configure validator
         Properties props = new Properties();
@@ -101,6 +118,7 @@ public class FederatedQueryRewriter {
 
         // Configure planner cluster
         VolcanoPlanner planner = new VolcanoPlanner();
+        planner.setTopDownOpt(true);
         planner.addRelTraitDef(ConventionTraitDef.INSTANCE);
         RelOptCluster cluster = RelOptCluster.create(planner, new RexBuilder(typeFactory));
 
@@ -115,13 +133,19 @@ public class FederatedQueryRewriter {
 
         // Convert the valid AST into a logical plan
         RelNode logPlan = relConverter.convertQuery(validNode, false, true).rel;
-        System.out.println(
+        logger.debug(
                 RelOptUtil.dumpPlan("[Logical plan]", logPlan, SqlExplainFormat.TEXT,
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
         // Initialize optimizer/planner with the necessary rules
         planner.addRule(CoreRules.FILTER_INTO_JOIN); // necessary to enable JDBCJoinRule
-//        planner.addRule(CoreRules.JOIN_CONDITION_PUSH);
+        planner.addRule(CoreRules.JOIN_CONDITION_PUSH);
+        planner.addRule(CoreRules.PROJECT_JOIN_TRANSPOSE);
+        planner.addRule(CoreRules.PROJECT_REMOVE);
+//        planner.addRule(CoreRules.PROJECT_TABLE_SCAN);
+//        planner.addRule(CoreRules.PROJECT_INTERPRETER_TABLE_SCAN);
+//        planner.addRule(CoreRules.PROJECT_JOIN_REMOVE);
+//        planner.addRule(CoreRules.PROJECT_SET_OP_TRANSPOSE);
 //        planner.addRule(CoreRules.JOIN_ASSOCIATE);
 //        planner.addRule(CoreRules.JOIN_COMMUTE);
 //        planner.addRule(CoreRules.PROJECT_REMOVE);
@@ -130,32 +154,31 @@ public class FederatedQueryRewriter {
 //        planner.addRule(CoreRules.FILTER_MULTI_JOIN_MERGE);
 //        planner.addRule(CoreRules.JOIN_TO_MULTI_JOIN);
 //        planner.addRule(CoreRules.JOIN_PROJECT_BOTH_TRANSPOSE);
-//        planner.addRule(CoreRules.FILTER_TO_CALC);
-//        planner.addRule(CoreRules.PROJECT_TO_CALC);
-//        planner.addRule(CoreRules.FILTER_CALC_MERGE);
-//        planner.addRule(CoreRules.PROJECT_CALC_MERGE);
         planner.addRule(EnumerableRules.ENUMERABLE_TABLE_SCAN_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_PROJECT_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_FILTER_RULE);
-        planner.addRule(EnumerableRules.ENUMERABLE_CALC_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_JOIN_RULE);
+        planner.addRule(EnumerableRules.ENUMERABLE_AGGREGATE_RULE);
+        planner.addRule(EnumerableRules.ENUMERABLE_SORT_RULE);
 
         // Define the type of the output plan (in this case we want a physical plan in EnumerableConvention)
         logPlan = planner.changeTraits(logPlan, cluster.traitSet().replace(EnumerableConvention.INSTANCE));
         planner.setRoot(logPlan);
 
         // Start the optimization process to obtain the most efficient physical plan
-        System.out.println("[Rules]\n" + planner.getRules());
+        logger.debug("[Rules]\n{}", planner.getRules());
         EnumerableRel phyPlan = (EnumerableRel) planner.findBestExp();
 
-        System.out.println(
+        logger.debug(
                 RelOptUtil.dumpPlan("[Physical plan]", phyPlan, SqlExplainFormat.TEXT,
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
+
+//        logger.debug("Graph:\n{}", planner.toDot());
 
         DBSourceVisitor visitor = new DBSourceVisitor(cluster);
         phyPlan.childrenAccept(visitor);
 
-        System.out.println(
+        logger.debug(
                 RelOptUtil.dumpPlan("[Remaining physical plan]", phyPlan, SqlExplainFormat.TEXT,
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
