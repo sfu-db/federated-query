@@ -15,7 +15,6 @@ import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.prepare.CalciteCatalogReader;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.RelVisitor;
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter;
 import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
@@ -38,26 +37,12 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.util.*;
-import java.util.stream.Collectors;
-
-import static java.util.Objects.requireNonNull;
 
 public class FederatedQueryRewriter {
 
     private static final RelOptTable.ViewExpander NOOP_EXPANDER = (type, query,
                                                                    schema, path) -> null;
     private static final Logger logger = LoggerFactory.getLogger(FederatedQueryRewriter.class);
-
-    public static void main(String[] args) throws Exception {
-        Logger logger = LoggerFactory.getLogger(FederatedQueryRewriter.class);
-
-        String sql = args[0];
-        logger.info("[Input]\n{}", sql);
-
-        FederatedQueryRewriter rewriter = new FederatedQueryRewriter();
-        FederatedPlan plan = rewriter.rewrite(sql);
-        logger.info("[Rewrite]\n{}", plan.toString());
-    }
 
     public static JdbcSchema createJdbcSchema(
             SchemaPlus parentSchema,
@@ -191,85 +176,10 @@ public class FederatedQueryRewriter {
         SqlNode resSqlNode = res.asQueryOrValues();
         String resSql = resSqlNode.toSqlString(dialect).getSql();
 
-        FederatedPlan plan = visitor.plan;
-        plan.add(new DBExecInfo("LOCAL", resSql));
+        FederatedPlan plan = visitor.getPlan();
+        plan.add(new FederatedPlan.DBExecutionInfo("LOCAL", resSql));
 
         return plan;
-    }
-
-    private class DBSourceVisitor extends RelVisitor {
-
-        private FederatedPlan plan = new FederatedPlan();
-        private RelOptCluster cluster;
-
-        public DBSourceVisitor(RelOptCluster cluster) {
-            this.cluster = cluster;
-        }
-
-        @Override public void visit(RelNode node, int ordinal, @Nullable RelNode parent) {
-            if (node instanceof JdbcToEnumerableConverter) {
-                // Convert subtree to sql, do not go deeper
-                final JdbcRel child = (JdbcRel) node.getInput(0);
-                final JdbcConvention jdbcConvention =
-                        (JdbcConvention) requireNonNull(child.getConvention(),
-                                () -> "child.getConvention() is null for " + child);
-                RelToSqlConverter sqlConverter = new RelToSqlConverter(jdbcConvention.dialect);
-                RelToSqlConverter.Result res = sqlConverter.visitRoot(child);
-                SqlNode resSqlNode = res.asQueryOrValues();
-                String resSql = resSqlNode.toSqlString(jdbcConvention.dialect).getSql();
-                String dbName = jdbcConvention.getName().substring(5); // remove prefix "JDBC:"
-                DBExecInfo info = new DBExecInfo(dbName, resSql);
-                plan.add(info);
-
-                LocalTable table = new LocalTable(Collections.singletonList(dbName), child.getRowType());
-                EnumerableTableScan scan = EnumerableTableScan.create(cluster, table);
-                parent.replaceInput(ordinal, scan);
-            }
-            else {
-                // Traverse child node
-                super.visit(node, ordinal, parent);
-            }
-        }
-    }
-
-    public class FederatedPlan {
-        public List<DBExecInfo> plan = new ArrayList<>();
-
-        public void add(DBExecInfo info) {
-            plan.add(info);
-        }
-
-        public int getCount() {
-            return plan.size();
-        }
-
-        public String getDBName(int idx) {
-            return plan.get(idx).dbName;
-        }
-
-        public String getSql(int idx) {
-            return plan.get(idx).sql;
-        }
-
-        @Override
-        public String toString() {
-            return String.join("\n\n", plan.stream().map(DBExecInfo::toString).collect(Collectors.toList()));
-        }
-    }
-
-    public class DBExecInfo {
-        public String dbName;
-        public String sql;
-
-        public DBExecInfo(String dbName, String sql) {
-            this.dbName = dbName;
-            this.sql = sql;
-        }
-
-        @Override
-        public String toString() {
-            return dbName + ": " + sql + ";";
-        }
     }
 
 }
