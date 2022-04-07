@@ -13,7 +13,7 @@ public class FederatedQueryRewriterTest {
         logger.info("[Input]\n{}", sql);
 
         FederatedQueryRewriter rewriter = new FederatedQueryRewriter();
-        FederatedQueryRewriter.FederatedPlan plan = rewriter.rewrite(sql);
+        FederatedPlan plan = rewriter.rewrite(sql);
         logger.info("[Rewrite]\n{}", plan.toString());
     }
 }
