@@ -29,6 +29,7 @@ import org.apache.calcite.prepare.CalciteCatalogReader;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter;
 import org.apache.calcite.rel.rules.CoreRules;
+import org.apache.calcite.rel.rules.FilterJoinRule;
 import org.apache.calcite.rel.rules.JoinAssociateRule;
 import org.apache.calcite.rel.rules.JoinPushThroughJoinRule;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
@@ -116,10 +117,12 @@ public class QueryRewriter {
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
         // Initialize optimizer/planner with the necessary rules
-        planner.addRule(CoreRules.FILTER_INTO_JOIN); // necessary to enable JDBCJoinRule
+//        planner.addRule(CoreRules.FILTER_INTO_JOIN); // necessary to enable JDBCJoinRule
+        planner.addRule(FilterJoinRulePatch.FilterIntoJoinRule.FilterIntoJoinRuleConfig.DEFAULT.toRule());
+        planner.addRule(FilterJoinRulePatch.JoinConditionPushRule.JoinConditionPushRuleConfig.DEFAULT.toRule());
 //        planner.addRule(CoreRules.JOIN_TO_MULTI_JOIN);
 //        planner.addRule(CoreRules.MULTI_JOIN_OPTIMIZE);
-        planner.addRule(CoreRules.JOIN_CONDITION_PUSH);
+//        planner.addRule(CoreRules.JOIN_CONDITION_PUSH);
         planner.addRule(CoreRules.JOIN_ASSOCIATE);
         planner.addRule(CoreRules.JOIN_COMMUTE);
         planner.addRule(CoreRules.PROJECT_REMOVE);
