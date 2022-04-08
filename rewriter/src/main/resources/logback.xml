@@ -10,7 +10,7 @@
         </layout>
     </appender>
 
-    <logger name="ai.dataprep.federated" level="debug" additivity="false">
+    <logger name="ai.dataprep.federated" level="info" additivity="false">
         <appender-ref ref="CONSOLE"/>
     </logger>
     <logger name="org.apache.calcite" level="info" additivity="false">

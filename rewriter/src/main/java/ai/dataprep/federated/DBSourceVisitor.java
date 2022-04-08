@@ -40,8 +40,7 @@ public class DBSourceVisitor extends RelVisitor {
             SqlNode resSqlNode = res.asQueryOrValues();
             String resSql = resSqlNode.toSqlString(jdbcConvention.dialect).getSql();
             String dbName = jdbcConvention.getName().substring(5); // remove prefix "JDBC:"
-            FederatedPlan.DBExecutionInfo info = new FederatedPlan.DBExecutionInfo(dbName, resSql);
-            plan.add(info);
+            dbName = plan.add(dbName, resSql);
 
             LocalTable table = new LocalTable(Collections.singletonList(dbName), child.getRowType());
             EnumerableTableScan scan = EnumerableTableScan.create(cluster, table);

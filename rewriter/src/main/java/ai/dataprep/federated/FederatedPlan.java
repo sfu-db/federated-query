@@ -1,14 +1,24 @@
 package ai.dataprep.federated;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.stream.Collectors;
 
 public class FederatedPlan {
     public List<DBExecutionInfo> plan = new ArrayList<>();
+    private HashMap<String, Integer> counter = new HashMap<>();
 
-    public void add(DBExecutionInfo info) {
+    public String add(String dbName, String sql) {
+        Integer count = counter.getOrDefault(dbName, 0);
+        String aliasDbName = dbName;
+        if (count > 0) {
+            aliasDbName = dbName + "_" + count;
+        }
+        DBExecutionInfo info = new DBExecutionInfo(dbName, aliasDbName, sql);
         plan.add(info);
+        counter.put(info.dbName, count+1);
+        return aliasDbName;
     }
 
     public int getCount() {
@@ -17,6 +27,10 @@ public class FederatedPlan {
 
     public String getDBName(int idx) {
         return plan.get(idx).dbName;
+    }
+
+    public String getAliasDBName(int idx) {
+        return plan.get(idx).aliasDbName;
     }
 
     public String getSql(int idx) {
@@ -30,16 +44,18 @@ public class FederatedPlan {
 
     public static class DBExecutionInfo {
         public String dbName;
+        public String aliasDbName;
         public String sql;
 
-        public DBExecutionInfo(String dbName, String sql) {
+        public DBExecutionInfo(String dbName, String aliasDbName, String sql) {
             this.dbName = dbName;
+            this.aliasDbName = aliasDbName;
             this.sql = sql;
         }
 
         @Override
         public String toString() {
-            return dbName + ": " + sql + ";";
+            return dbName + "[" + aliasDbName + "]" + ": " + sql + ";";
         }
     }
 }

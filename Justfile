@@ -4,7 +4,7 @@ java sql="${TEST_SQL}":
     cd rewriter && mvn package && java -jar target/federated-rewriter-1.0-SNAPSHOT-jar-with-dependencies.jar "{{sql}}"
 
 build:
-    cd rewriter && mvn package
+    cd rewriter && mvn package -Dmaven.test.skip=true
 
 rust-single file="test.sql":
     cp -f rewriter/target/federated-rewriter-1.0-SNAPSHOT-jar-with-dependencies.jar connector-x/connectorx/federated-rewriter.jar

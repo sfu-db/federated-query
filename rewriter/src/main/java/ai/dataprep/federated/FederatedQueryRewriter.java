@@ -59,7 +59,7 @@ public class FederatedQueryRewriter {
         return new JdbcSchema(dataSource, dialect, convention, catalog, schema);
     }
 
-    public FederatedPlan rewrite(String sql) throws Exception {
+    public FederatedPlan rewrite(HashMap<String, DataSource> dbConns, String sql) throws Exception {
 
         // Parse the query into an AST
         SqlParser parser = SqlParser.create(sql);
@@ -71,19 +71,11 @@ public class FederatedQueryRewriter {
         final CalciteConnection calciteConnection = connection.unwrap(CalciteConnection.class);
         final SchemaPlus rootSchema = calciteConnection.getRootSchema();
 
-
-        final DataSource ds1 = JdbcSchema.dataSource(
-                "jdbc:postgresql://127.0.0.1:5432/tpchsf1",
-                "org.postgresql.Driver",
-                "postgres",
-                "postgres");
-        rootSchema.add("db1", createJdbcSchema(rootSchema, "db1", ds1, null, null));
-        final DataSource ds2 = JdbcSchema.dataSource(
-                "jdbc:mysql://127.0.0.1:3306/tpchsf1",
-                "com.mysql.cj.jdbc.Driver",
-                "root",
-                "mysql");
-        rootSchema.add("db2", createJdbcSchema(rootSchema, "db2", ds2, null, null));
+        for (Map.Entry<String, DataSource> entry: dbConns.entrySet()) {
+            String name = entry.getKey();
+            DataSource dataSource = entry.getValue();
+            rootSchema.add(name, createJdbcSchema(rootSchema, name, dataSource, null, null));
+        }
 
         // Configure validator
         Properties props = new Properties();
@@ -123,8 +115,10 @@ public class FederatedQueryRewriter {
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
         // Initialize optimizer/planner with the necessary rules
-        planner.addRule(CoreRules.FILTER_INTO_JOIN); // necessary to enable JDBCJoinRule
-        planner.addRule(CoreRules.JOIN_CONDITION_PUSH);
+//        planner.addRule(CoreRules.FILTER_INTO_JOIN); // necessary to enable JDBCJoinRule
+//        planner.addRule(CoreRules.JOIN_CONDITION_PUSH);
+        planner.addRule(FilterJoinRulePatch.FilterIntoJoinRule.FilterIntoJoinRuleConfig.DEFAULT.toRule());
+        planner.addRule(FilterJoinRulePatch.JoinConditionPushRule.JoinConditionPushRuleConfig.DEFAULT.toRule());
         planner.addRule(CoreRules.PROJECT_JOIN_TRANSPOSE);
         planner.addRule(CoreRules.PROJECT_REMOVE);
 //        planner.addRule(CoreRules.PROJECT_TABLE_SCAN);
@@ -177,7 +171,7 @@ public class FederatedQueryRewriter {
         String resSql = resSqlNode.toSqlString(dialect).getSql();
 
         FederatedPlan plan = visitor.getPlan();
-        plan.add(new FederatedPlan.DBExecutionInfo("LOCAL", resSql));
+        plan.add("LOCAL", resSql);
 
         return plan;
     }
