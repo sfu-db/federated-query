@@ -8,7 +8,6 @@ import javax.sql.DataSource;
 import java.util.HashMap;
 
 public class FederatedQueryRewriterTest {
-    private static final Logger logger = LoggerFactory.getLogger(FederatedQueryRewriter.class);
 
     public static void main(String[] args) throws Exception {
         Logger logger = LoggerFactory.getLogger(FederatedQueryRewriter.class);

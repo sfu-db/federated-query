@@ -53,16 +53,6 @@ public class QueryRewriter {
     private static final RelOptTable.ViewExpander NOOP_EXPANDER = (type, query,
                                                                    schema, path) -> null;
 
-    public static void main(String[] args) throws Exception {
-        String sql = args[0];
-        System.out.println("[Input]");
-        System.out.println(sql);
-
-        String rewriteSql = rewrite(sql);
-        System.out.println("[Rewrite]");
-        System.out.println(rewriteSql);
-    }
-
     public static String rewrite(String sql) throws Exception {
         // Parse the query into an AST
         SqlParser parser = SqlParser.create(sql);
