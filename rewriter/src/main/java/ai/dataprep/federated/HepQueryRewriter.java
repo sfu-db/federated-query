@@ -1,27 +1,17 @@
 package ai.dataprep.federated;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.util.Collections;
-import java.util.Properties;
-
-import javax.sql.DataSource;
-
-
-
 import org.apache.calcite.adapter.enumerable.EnumerableConvention;
 import org.apache.calcite.adapter.enumerable.EnumerableRel;
-import org.apache.calcite.adapter.enumerable.EnumerableRules;
+import org.apache.calcite.adapter.jdbc.JdbcRules;
 import org.apache.calcite.adapter.jdbc.JdbcSchema;
 import org.apache.calcite.config.CalciteConnectionConfig;
 import org.apache.calcite.config.CalciteConnectionConfigImpl;
 import org.apache.calcite.config.CalciteConnectionProperty;
 import org.apache.calcite.jdbc.CalciteConnection;
 import org.apache.calcite.jdbc.CalciteSchema;
-import org.apache.calcite.plan.ConventionTraitDef;
-import org.apache.calcite.plan.RelOptCluster;
-import org.apache.calcite.plan.RelOptTable;
-import org.apache.calcite.plan.RelOptUtil;
+import org.apache.calcite.plan.*;
+import org.apache.calcite.plan.hep.HepPlanner;
+import org.apache.calcite.plan.hep.HepProgramBuilder;
 import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.prepare.CalciteCatalogReader;
 import org.apache.calcite.rel.RelNode;
@@ -42,7 +32,13 @@ import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.sql2rel.SqlToRelConverter;
 import org.apache.calcite.sql2rel.StandardConvertletTable;
 
-public class QueryRewriter {
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.util.Collections;
+import java.util.Properties;
+
+public class HepQueryRewriter {
 
     private static final RelOptTable.ViewExpander NOOP_EXPANDER = (type, query,
                                                                    schema, path) -> null;
@@ -81,9 +77,17 @@ public class QueryRewriter {
         SqlNode validNode = validator.validate(sqlNode);
 
         // Configure planner cluster
-        VolcanoPlanner planner = new VolcanoPlanner();
+        HepProgramBuilder builder = new HepProgramBuilder();
+        builder.addRuleInstance(CoreRules.FILTER_INTO_JOIN);
+        builder.addRuleInstance(CoreRules.JOIN_CONDITION_PUSH);
+//        builder.addRuleInstance(CoreRules.JOIN_ASSOCIATE);
+//        builder.addRuleInstance(CoreRules.JOIN_COMMUTE);
+        builder.addRuleInstance(CoreRules.PROJECT_JOIN_TRANSPOSE);
+        HepPlanner planner = new HepPlanner(builder.build(), null, false, null, RelOptCostImpl.FACTORY);
+
+//        VolcanoPlanner planner = new VolcanoPlanner();
 //        planner.setTopDownOpt(true);
-        planner.addRelTraitDef(ConventionTraitDef.INSTANCE);
+//        planner.addRelTraitDef(ConventionTraitDef.INSTANCE);
         RelOptCluster cluster = RelOptCluster.create(planner, new RexBuilder(typeFactory));
 
         // Configure SqlToRelConverter
@@ -101,25 +105,20 @@ public class QueryRewriter {
                 RelOptUtil.dumpPlan("[Logical plan]", logPlan, SqlExplainFormat.TEXT,
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
-        // Initialize optimizer/planner with the necessary rules
-        planner.addRule(CoreRules.FILTER_INTO_JOIN); // necessary to enable JDBCJoinRule
-//        planner.addRule(FilterJoinRule.FilterIntoJoinRule.FilterIntoJoinRuleConfig.DEFAULT.toRule());
-//        planner.addRule(FilterJoinRule.JoinConditionPushRule.JoinConditionPushRuleConfig.DEFAULT.toRule());
-        planner.addRule(CoreRules.JOIN_CONDITION_PUSH);
-        planner.addRule(CoreRules.JOIN_ASSOCIATE);
-        planner.addRule(CoreRules.JOIN_COMMUTE);
-        planner.addRule(CoreRules.PROJECT_REMOVE);
-        planner.addRule(CoreRules.PROJECT_JOIN_TRANSPOSE);
-
         // Define the type of the output plan (in this case we want a physical plan in
         // EnumerableConvention)
-        logPlan = planner.changeTraits(logPlan, cluster.traitSet().replace(EnumerableConvention.INSTANCE));
+//        logPlan = planner.changeTraits(logPlan, cluster.traitSet().replace(EnumerableConvention.INSTANCE));
 
         planner.setRoot(logPlan);
 
         // Start the optimization process to obtain the most efficient physical plan
+//        System.out.println(
+//                RelOptUtil.dumpPlan("[Logical plan before optimize]", logPlan, SqlExplainFormat.TEXT,
+//                        SqlExplainLevel.ALL_ATTRIBUTES));
         System.out.println("[Rules]\n" + planner.getRules());
-        EnumerableRel phyPlan = (EnumerableRel) planner.findBestExp();
+//        System.out.println("[Rule Queue]\n" + planner.getRuleQueue());
+        RelNode phyPlan = planner.findBestExp();
+//        EnumerableRel phyPlan = (EnumerableRel) planner.findBestExp();
 
         // Print planner info in graph
 //        System.out.println("Graph:\n" + planner.toDot());

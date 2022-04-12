@@ -17,7 +17,6 @@ import org.apache.calcite.prepare.CalciteCatalogReader;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter;
 import org.apache.calcite.rel.rules.CoreRules;
-import org.apache.calcite.rel.rules.JoinPushThroughJoinRule;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.schema.SchemaPlus;
@@ -99,6 +98,7 @@ public class FederatedQueryRewriter {
         planner.setTopDownOpt(true);
         planner.addRelTraitDef(ConventionTraitDef.INSTANCE);
         RelOptCluster cluster = RelOptCluster.create(planner, new RexBuilder(typeFactory));
+        cluster.setMetadataProvider(FederatedRelMetadataProvider.INSTANCE);
 
         // Configure SqlToRelConverter
         SqlToRelConverter relConverter = new SqlToRelConverter(
@@ -115,30 +115,28 @@ public class FederatedQueryRewriter {
                 RelOptUtil.dumpPlan("[Logical plan]", logPlan, SqlExplainFormat.TEXT,
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
+        RemoteJdbcLogicalWrapper.Visitor wrapperVisitor = new RemoteJdbcLogicalWrapper.Visitor();
+        logPlan.childrenAccept(wrapperVisitor);
+        logger.debug(
+                RelOptUtil.dumpPlan("[Logical plan after preprocessing]", logPlan, SqlExplainFormat.TEXT,
+                        SqlExplainLevel.EXPPLAN_ATTRIBUTES));
+
         // Initialize optimizer/planner with the necessary rules
 //        planner.addRule(CoreRules.FILTER_INTO_JOIN); // necessary to enable JDBCJoinRule
 //        planner.addRule(CoreRules.JOIN_CONDITION_PUSH);
-        planner.addRule(FilterJoinRulePatch.FilterIntoJoinRule.FilterIntoJoinRuleConfig.DEFAULT.toRule());
-        planner.addRule(FilterJoinRulePatch.JoinConditionPushRule.JoinConditionPushRuleConfig.DEFAULT.toRule());
+        planner.addRule(FilterJoinRule.FilterIntoJoinRule.FilterIntoJoinRuleConfig.DEFAULT.toRule());
+        planner.addRule(FilterJoinRule.JoinConditionPushRule.JoinConditionPushRuleConfig.DEFAULT.toRule());
         planner.addRule(CoreRules.PROJECT_JOIN_TRANSPOSE);
         planner.addRule(CoreRules.PROJECT_REMOVE);
-//        planner.addRule(CoreRules.PROJECT_TABLE_SCAN);
-//        planner.addRule(CoreRules.PROJECT_INTERPRETER_TABLE_SCAN);
-//        planner.addRule(CoreRules.PROJECT_JOIN_REMOVE);
-//        planner.addRule(CoreRules.PROJECT_SET_OP_TRANSPOSE);
         planner.addRule(CoreRules.JOIN_ASSOCIATE);
         planner.addRule(CoreRules.JOIN_COMMUTE);
-//        planner.addRule(JoinPushThroughJoinRule.RIGHT);
-//        planner.addRule(JoinPushThroughJoinRule.LEFT);
-//        planner.addRule(CoreRules.FILTER_MULTI_JOIN_MERGE);
-//        planner.addRule(CoreRules.JOIN_TO_MULTI_JOIN);
-//        planner.addRule(CoreRules.JOIN_PROJECT_BOTH_TRANSPOSE);
-        planner.addRule(EnumerableRules.ENUMERABLE_TABLE_SCAN_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_PROJECT_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_FILTER_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_JOIN_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_AGGREGATE_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_SORT_RULE);
+        planner.addRule(RemoteJdbcLogicalWrapper.ENUMERABLE_WRAPPER_RULE);
+        planner.addRule(EnumerableRules.ENUMERABLE_CORRELATE_RULE);
 
         // Define the type of the output plan (in this case we want a physical plan in EnumerableConvention)
         logPlan = planner.changeTraits(logPlan, cluster.traitSet().replace(EnumerableConvention.INSTANCE));
@@ -154,7 +152,7 @@ public class FederatedQueryRewriter {
 
 //        logger.debug("Graph:\n{}", planner.toDot());
 
-        DBSourceVisitor visitor = new DBSourceVisitor(cluster);
+        DBSourceVisitor visitor = new DBSourceVisitor();
         phyPlan.childrenAccept(visitor);
 
         logger.debug(

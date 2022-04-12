@@ -24,9 +24,9 @@ public class DBSourceVisitor extends RelVisitor {
         return plan;
     }
 
-    public DBSourceVisitor(RelOptCluster cluster) {
-        this.cluster = cluster;
-    }
+//    public DBSourceVisitor(RelOptCluster cluster) {
+//        this.cluster = cluster;
+//    }
 
     @Override public void visit(RelNode node, int ordinal, @Nullable RelNode parent) {
         if (node instanceof JdbcToEnumerableConverter) {
@@ -43,7 +43,7 @@ public class DBSourceVisitor extends RelVisitor {
             dbName = plan.add(dbName, resSql);
 
             LocalTable table = new LocalTable(Collections.singletonList(dbName), child.getRowType());
-            EnumerableTableScan scan = EnumerableTableScan.create(cluster, table);
+            EnumerableTableScan scan = EnumerableTableScan.create(node.getCluster(), table);
             parent.replaceInput(ordinal, scan);
         }
         else {

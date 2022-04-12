@@ -1,45 +1,232 @@
 package ai.dataprep.federated;
 
-import org.apache.calcite.adapter.jdbc.JdbcConvention;
-import org.apache.calcite.adapter.jdbc.JdbcRules;
+import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
+import org.apache.calcite.adapter.jdbc.*;
+import org.apache.calcite.linq4j.Queryable;
+import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.plan.*;
-import org.apache.calcite.rel.InvalidRelException;
-import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.core.CorrelationId;
-import org.apache.calcite.rel.core.Join;
-import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.calcite.prepare.Prepare;
+import org.apache.calcite.rel.*;
+import org.apache.calcite.rel.convert.ConverterRule;
+import org.apache.calcite.rel.core.*;
+import org.apache.calcite.rel.metadata.RelMdUtil;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.rel2sql.SqlImplementor;
-import org.apache.calcite.rex.RexCall;
-import org.apache.calcite.rex.RexInputRef;
-import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rex.*;
+import org.apache.calcite.schema.ModifiableTable;
+import org.apache.calcite.sql.SqlDialect;
+import org.apache.calcite.sql.SqlFunction;
+import org.apache.calcite.sql.SqlOperator;
+import org.apache.calcite.sql.validate.SqlValidatorUtil;
+import org.apache.calcite.tools.RelBuilder;
+import org.apache.calcite.tools.RelBuilderFactory;
+import org.apache.calcite.util.ImmutableBitSet;
+import org.apache.calcite.util.Util;
 import org.apache.calcite.util.trace.CalciteTrace;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 
+import java.rmi.Remote;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
+
+import static java.util.Objects.requireNonNull;
 
 public class RemoteJdbcRules {
+    private RemoteJdbcRules() {
+    }
     protected static final Logger LOGGER = CalciteTrace.getPlannerTracer();
 
-    public static class RemoteJdbcJoinRule extends JdbcRules.JdbcJoinRule {
+    static final RelFactories.ProjectFactory PROJECT_FACTORY =
+            (input, hints, projects, fieldNames) -> {
+                final RelOptCluster cluster = input.getCluster();
+                final RelDataType rowType =
+                        RexUtil.createStructType(cluster.getTypeFactory(), projects,
+                                fieldNames, SqlValidatorUtil.F_SUGGESTER);
+                return new RemoteJdbcRules.JdbcProject(cluster, input.getTraitSet(), input, projects,
+                        rowType);
+            };
+
+    static final RelFactories.FilterFactory FILTER_FACTORY =
+            (input, condition, variablesSet) -> {
+                Preconditions.checkArgument(variablesSet.isEmpty(),
+                        "JdbcFilter does not allow variables");
+                return new RemoteJdbcRules.JdbcFilter(input.getCluster(),
+                        input.getTraitSet(), input, condition);
+            };
+
+    static final RelFactories.JoinFactory JOIN_FACTORY =
+            (left, right, hints, condition, variablesSet, joinType, semiJoinDone) -> {
+                final RelOptCluster cluster = left.getCluster();
+                final RelTraitSet traitSet = cluster.traitSetOf(
+                        requireNonNull(left.getConvention(), "left.getConvention()"));
+                try {
+                    return new RemoteJdbcRules.JdbcJoin(cluster, traitSet, left, right, condition,
+                            variablesSet, joinType);
+                } catch (InvalidRelException e) {
+                    throw new AssertionError(e);
+                }
+            };
+
+    static final RelFactories.CorrelateFactory CORRELATE_FACTORY =
+            (left, right, hints, correlationId, requiredColumns, joinType) -> {
+                throw new UnsupportedOperationException("JdbcCorrelate");
+            };
+
+    public static final RelFactories.SortFactory SORT_FACTORY =
+            (input, collation, offset, fetch) -> {
+                throw new UnsupportedOperationException("JdbcSort");
+            };
+
+    public static final RelFactories.ExchangeFactory EXCHANGE_FACTORY =
+            (input, distribution) -> {
+                throw new UnsupportedOperationException("JdbcExchange");
+            };
+
+    public static final RelFactories.SortExchangeFactory SORT_EXCHANGE_FACTORY =
+            (input, distribution, collation) -> {
+                throw new UnsupportedOperationException("JdbcSortExchange");
+            };
+
+    public static final RelFactories.AggregateFactory AGGREGATE_FACTORY =
+            (input, hints, groupSet, groupSets, aggCalls) -> {
+                final RelOptCluster cluster = input.getCluster();
+                final RelTraitSet traitSet = cluster.traitSetOf(
+                        requireNonNull(input.getConvention(), "input.getConvention()"));
+                try {
+                    return new RemoteJdbcRules.JdbcAggregate(cluster, traitSet, input, groupSet,
+                            groupSets, aggCalls);
+                } catch (InvalidRelException e) {
+                    throw new AssertionError(e);
+                }
+            };
+
+    public static final RelFactories.MatchFactory MATCH_FACTORY =
+            (input, pattern, rowType, strictStart, strictEnd, patternDefinitions,
+             measures, after, subsets, allRows, partitionKeys, orderKeys,
+             interval) -> {
+                throw new UnsupportedOperationException("JdbcMatch");
+            };
+
+    public static final RelFactories.SetOpFactory SET_OP_FACTORY =
+            (kind, inputs, all) -> {
+                RelNode input = inputs.get(0);
+                RelOptCluster cluster = input.getCluster();
+                final RelTraitSet traitSet = cluster.traitSetOf(
+                        requireNonNull(input.getConvention(), "input.getConvention()"));
+                switch (kind) {
+                    case UNION:
+                        return new RemoteJdbcRules.JdbcUnion(cluster, traitSet, inputs, all);
+                    case INTERSECT:
+                        return new RemoteJdbcRules.JdbcIntersect(cluster, traitSet, inputs, all);
+                    case EXCEPT:
+                        return new RemoteJdbcRules.JdbcMinus(cluster, traitSet, inputs, all);
+                    default:
+                        throw new AssertionError("unknown: " + kind);
+                }
+            };
+
+    public static final RelFactories.ValuesFactory VALUES_FACTORY =
+            (cluster, rowType, tuples) -> {
+                throw new UnsupportedOperationException();
+            };
+
+    public static final RelFactories.TableScanFactory TABLE_SCAN_FACTORY =
+            (toRelContext, table) -> {
+                throw new UnsupportedOperationException();
+            };
+
+    public static final RelFactories.SnapshotFactory SNAPSHOT_FACTORY =
+            (input, period) -> {
+                throw new UnsupportedOperationException();
+            };
+
+    /** A {@link RelBuilderFactory} that creates a {@link RelBuilder} that will
+     * create JDBC relational expressions for everything. */
+    public static final RelBuilderFactory JDBC_BUILDER =
+            RelBuilder.proto(
+                    Contexts.of(PROJECT_FACTORY,
+                            FILTER_FACTORY,
+                            JOIN_FACTORY,
+                            SORT_FACTORY,
+                            EXCHANGE_FACTORY,
+                            SORT_EXCHANGE_FACTORY,
+                            AGGREGATE_FACTORY,
+                            MATCH_FACTORY,
+                            SET_OP_FACTORY,
+                            VALUES_FACTORY,
+                            TABLE_SCAN_FACTORY,
+                            SNAPSHOT_FACTORY));
+
+    /** Creates a list of rules with the given JDBC convention instance. */
+    public static List<RelOptRule> rules(JdbcConvention out) {
+        final ImmutableList.Builder<RelOptRule> b = ImmutableList.builder();
+        foreachRule(out, b::add);
+        return b.build();
+    }
+
+    /** Creates a list of rules with the given JDBC convention instance
+     * and builder factory. */
+    public static List<RelOptRule> rules(JdbcConvention out,
+                                         RelBuilderFactory relBuilderFactory) {
+        final ImmutableList.Builder<RelOptRule> b = ImmutableList.builder();
+        foreachRule(out, r ->
+                b.add(r.config.withRelBuilderFactory(relBuilderFactory).toRule()));
+        return b.build();
+    }
+
+    private static void foreachRule(JdbcConvention out,
+                                    Consumer<RelRule<?>> consumer) {
+        consumer.accept(RemoteJdbcToEnumerableConverterRule.create(out));
+        consumer.accept(RemoteJdbcRules.JdbcJoinRule.create(out));
+        consumer.accept(RemoteJdbcRules.JdbcProjectRule.create(out));
+        consumer.accept(RemoteJdbcRules.JdbcFilterRule.create(out));
+        consumer.accept(RemoteJdbcRules.JdbcAggregateRule.create(out));
+        consumer.accept(RemoteJdbcRules.JdbcSortRule.create(out));
+        consumer.accept(RemoteJdbcRules.JdbcUnionRule.create(out));
+        consumer.accept(RemoteJdbcRules.JdbcIntersectRule.create(out));
+        consumer.accept(RemoteJdbcRules.JdbcMinusRule.create(out));
+        consumer.accept(RemoteJdbcRules.JdbcTableModificationRule.create(out));
+        consumer.accept(RemoteJdbcRules.JdbcValuesRule.create(out));
+    }
+
+    /** Abstract base class for rule that converts to JDBC. */
+    abstract static class JdbcConverterRule extends ConverterRule {
+        protected JdbcConverterRule(Config config) {
+            super(config);
+        }
+    }
+
+    /** Rule that converts a join to JDBC. */
+    public static class JdbcJoinRule extends RemoteJdbcRules.JdbcConverterRule {
         /** Creates a JdbcJoinRule. */
-        public static RemoteJdbcJoinRule create(JdbcConvention out) {
+        public static RemoteJdbcRules.JdbcJoinRule create(JdbcConvention out) {
             return Config.INSTANCE
                     .withConversion(Join.class, Convention.NONE, out, "RemoteJdbcJoinRule")
-                    .withRuleFactory(RemoteJdbcJoinRule::new)
-                    .toRule(RemoteJdbcJoinRule.class);
+                    .withRuleFactory(RemoteJdbcRules.JdbcJoinRule::new)
+                    .toRule(RemoteJdbcRules.JdbcJoinRule.class);
         }
 
-        /**
-         * Called from the Config.
-         *
-         * @param config
-         */
-        protected RemoteJdbcJoinRule(Config config) {
+        /** Called from the Config. */
+        protected JdbcJoinRule(Config config) {
             super(config);
+        }
+
+        @Override public @Nullable RelNode convert(RelNode rel) {
+            final Join join = (Join) rel;
+            switch (join.getJoinType()) {
+                case SEMI:
+                case ANTI:
+                    // It's not possible to convert semi-joins or anti-joins. They have fewer columns
+                    // than regular joins.
+                    return null;
+                default:
+                    return convert(join, true);
+            }
         }
 
         /**
@@ -64,7 +251,7 @@ public class RemoteJdbcRules {
                 return null;
             }
             try {
-                return new RemoteJdbcJoin(
+                return new RemoteJdbcRules.JdbcJoin(
                         join.getCluster(),
                         join.getTraitSet().replace(out),
                         newInputs.get(0),
@@ -78,9 +265,8 @@ public class RemoteJdbcRules {
             }
         }
 
-
         /**
-         * Returns whether a condition is supported by {@link JdbcRules.JdbcJoin}.
+         * Returns whether a condition is supported by {@link RemoteJdbcRules.JdbcJoin}.
          *
          * <p>Corresponds to the capabilities of
          * {@link SqlImplementor#convertConditionToSqlNode}.
@@ -119,19 +305,43 @@ public class RemoteJdbcRules {
                     return false;
             }
         }
+
+        @Override public boolean matches(RelOptRuleCall call) {
+            Join join = call.rel(0);
+            JoinRelType joinType = join.getJoinType();
+            return ((JdbcConvention) getOutConvention()).dialect.supportsJoinType(joinType);
+        }
     }
 
-    public static class RemoteJdbcJoin extends JdbcRules.JdbcJoin {
-
-        public RemoteJdbcJoin(RelOptCluster cluster, RelTraitSet traitSet, RelNode left, RelNode right, RexNode condition, Set<CorrelationId> variablesSet, JoinRelType joinType) throws InvalidRelException {
-            super(cluster, traitSet, left, right, condition, variablesSet, joinType);
+    /** Join operator implemented in JDBC convention. */
+    public static class JdbcJoin extends Join implements JdbcRel {
+        /** Creates a JdbcJoin. */
+        public JdbcJoin(RelOptCluster cluster, RelTraitSet traitSet,
+                        RelNode left, RelNode right, RexNode condition,
+                        Set<CorrelationId> variablesSet, JoinRelType joinType)
+                throws InvalidRelException {
+            super(cluster, traitSet, ImmutableList.of(), left, right, condition, variablesSet, joinType);
         }
 
-        @Override public RemoteJdbcJoin copy(RelTraitSet traitSet, RexNode condition,
+        @Deprecated // to be removed before 2.0
+        protected JdbcJoin(
+                RelOptCluster cluster,
+                RelTraitSet traitSet,
+                RelNode left,
+                RelNode right,
+                RexNode condition,
+                JoinRelType joinType,
+                Set<String> variablesStopped)
+                throws InvalidRelException {
+            this(cluster, traitSet, left, right, condition,
+                    CorrelationId.setOf(variablesStopped), joinType);
+        }
+
+        @Override public RemoteJdbcRules.JdbcJoin copy(RelTraitSet traitSet, RexNode condition,
                                                  RelNode left, RelNode right, JoinRelType joinType,
                                                  boolean semiJoinDone) {
             try {
-                return new RemoteJdbcJoin(getCluster(), traitSet, left, right,
+                return new RemoteJdbcRules.JdbcJoin(getCluster(), traitSet, left, right,
                         condition, variablesSet, joinType);
             } catch (InvalidRelException e) {
                 // Semantic error not possible. Must be a bug. Convert to
@@ -142,11 +352,734 @@ public class RemoteJdbcRules {
 
         @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
                                                               RelMetadataQuery mq) {
+            // We always "build" the
             double rowCount = mq.getRowCount(this);
 
-            RelOptCost cost = planner.getCostFactory().makeCost(rowCount, 0, 0);
-            // assume remote join is fast
-            return cost.multiplyBy(.01d);
+            return planner.getCostFactory().makeCost(rowCount, 0, 0).multiplyBy(RemoteJdbcConvention.COST_MULTIPLIER);
         }
+
+        @Override public double estimateRowCount(RelMetadataQuery mq) {
+            final double leftRowCount = left.estimateRowCount(mq);
+            final double rightRowCount = right.estimateRowCount(mq);
+            return Math.max(leftRowCount, rightRowCount);
+        }
+
+        @Override public JdbcImplementor.Result implement(JdbcImplementor implementor) {
+            return implementor.implement(this);
+        }
+    }
+
+    /** Calc operator implemented in JDBC convention.
+     *
+     * @see org.apache.calcite.rel.core.Calc
+     * */
+    @Deprecated // to be removed before 2.0
+    public static class JdbcCalc extends SingleRel implements JdbcRel {
+        private final RexProgram program;
+
+        public JdbcCalc(RelOptCluster cluster,
+                        RelTraitSet traitSet,
+                        RelNode input,
+                        RexProgram program) {
+            super(cluster, traitSet, input);
+            assert getConvention() instanceof JdbcConvention;
+            this.program = program;
+            this.rowType = program.getOutputRowType();
+        }
+
+        @Deprecated // to be removed before 2.0
+        public JdbcCalc(RelOptCluster cluster, RelTraitSet traitSet, RelNode input,
+                        RexProgram program, int flags) {
+            this(cluster, traitSet, input, program);
+            Util.discard(flags);
+        }
+
+        @Override public RelWriter explainTerms(RelWriter pw) {
+            return program.explainCalc(super.explainTerms(pw));
+        }
+
+        @Override public double estimateRowCount(RelMetadataQuery mq) {
+            return RelMdUtil.estimateFilteredRows(getInput(), program, mq);
+        }
+
+        @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
+                                                              RelMetadataQuery mq) {
+            double dRows = mq.getRowCount(this);
+            double dCpu = mq.getRowCount(getInput())
+                    * program.getExprCount();
+            double dIo = 0;
+            return planner.getCostFactory().makeCost(dRows, dCpu, dIo).multiplyBy(RemoteJdbcConvention.COST_MULTIPLIER);
+        }
+
+        @Override public RelNode copy(RelTraitSet traitSet, List<RelNode> inputs) {
+            return new RemoteJdbcRules.JdbcCalc(getCluster(), traitSet, sole(inputs), program);
+        }
+
+        @Override public JdbcImplementor.Result implement(JdbcImplementor implementor) {
+            return implementor.implement(this);
+        }
+    }
+
+    /**
+     * Rule to convert a {@link org.apache.calcite.rel.core.Project} to
+     * an {@link RemoteJdbcRules.JdbcProject}.
+     */
+    public static class JdbcProjectRule extends RemoteJdbcRules.JdbcConverterRule {
+        /** Creates a JdbcProjectRule. */
+        public static RemoteJdbcRules.JdbcProjectRule create(JdbcConvention out) {
+            return Config.INSTANCE
+                    .withConversion(Project.class, project ->
+                                    (out.dialect.supportsWindowFunctions()
+                                            || !project.containsOver())
+                                            && !userDefinedFunctionInProject(project),
+                            Convention.NONE, out, "RemoteJdbcProjectRule")
+                    .withRuleFactory(RemoteJdbcRules.JdbcProjectRule::new)
+                    .toRule(RemoteJdbcRules.JdbcProjectRule.class);
+        }
+
+        /** Called from the Config. */
+        protected JdbcProjectRule(Config config) {
+            super(config);
+        }
+
+        private static boolean userDefinedFunctionInProject(Project project) {
+            RemoteJdbcRules.CheckingUserDefinedFunctionVisitor visitor = new RemoteJdbcRules.CheckingUserDefinedFunctionVisitor();
+            for (RexNode node : project.getProjects()) {
+                node.accept(visitor);
+                if (visitor.containsUserDefinedFunction()) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        @Override public @Nullable RelNode convert(RelNode rel) {
+            final Project project = (Project) rel;
+
+            return new RemoteJdbcRules.JdbcProject(
+                    rel.getCluster(),
+                    rel.getTraitSet().replace(out),
+                    convert(
+                            project.getInput(),
+                            project.getInput().getTraitSet().replace(out)),
+                    project.getProjects(),
+                    project.getRowType());
+        }
+    }
+
+    /** Implementation of {@link org.apache.calcite.rel.core.Project} in
+     * {@link JdbcConvention jdbc calling convention}. */
+    public static class JdbcProject
+            extends Project
+            implements JdbcRel {
+        public JdbcProject(
+                RelOptCluster cluster,
+                RelTraitSet traitSet,
+                RelNode input,
+                List<? extends RexNode> projects,
+                RelDataType rowType) {
+            super(cluster, traitSet, ImmutableList.of(), input, projects, rowType);
+            assert getConvention() instanceof JdbcConvention;
+        }
+
+        @Deprecated // to be removed before 2.0
+        public JdbcProject(RelOptCluster cluster, RelTraitSet traitSet,
+                           RelNode input, List<RexNode> projects, RelDataType rowType, int flags) {
+            this(cluster, traitSet, input, projects, rowType);
+            Util.discard(flags);
+        }
+
+        @Override public RemoteJdbcRules.JdbcProject copy(RelTraitSet traitSet, RelNode input,
+                                                    List<RexNode> projects, RelDataType rowType) {
+            return new RemoteJdbcRules.JdbcProject(getCluster(), traitSet, input, projects, rowType);
+        }
+
+        @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
+                                                              RelMetadataQuery mq) {
+            RelOptCost cost = super.computeSelfCost(planner, mq);
+            if (cost == null) {
+                return null;
+            }
+            return cost.multiplyBy(RemoteJdbcConvention.COST_MULTIPLIER);
+        }
+
+        @Override public JdbcImplementor.Result implement(JdbcImplementor implementor) {
+            return implementor.implement(this);
+        }
+    }
+
+    /**
+     * Rule to convert a {@link org.apache.calcite.rel.core.Filter} to
+     * an {@link RemoteJdbcRules.JdbcFilter}.
+     */
+    public static class JdbcFilterRule extends RemoteJdbcRules.JdbcConverterRule {
+        /** Creates a JdbcFilterRule. */
+        public static RemoteJdbcRules.JdbcFilterRule create(JdbcConvention out) {
+            return Config.INSTANCE
+                    .withConversion(Filter.class, r -> !userDefinedFunctionInFilter(r),
+                            Convention.NONE, out, "RemoteJdbcFilterRule")
+                    .withRuleFactory(RemoteJdbcRules.JdbcFilterRule::new)
+                    .toRule(RemoteJdbcRules.JdbcFilterRule.class);
+        }
+
+        /** Called from the Config. */
+        protected JdbcFilterRule(Config config) {
+            super(config);
+        }
+
+        private static boolean userDefinedFunctionInFilter(Filter filter) {
+            RemoteJdbcRules.CheckingUserDefinedFunctionVisitor visitor = new RemoteJdbcRules.CheckingUserDefinedFunctionVisitor();
+            filter.getCondition().accept(visitor);
+            return visitor.containsUserDefinedFunction();
+        }
+
+        @Override public @Nullable RelNode convert(RelNode rel) {
+            final Filter filter = (Filter) rel;
+
+            return new RemoteJdbcRules.JdbcFilter(
+                    rel.getCluster(),
+                    rel.getTraitSet().replace(out),
+                    convert(filter.getInput(),
+                            filter.getInput().getTraitSet().replace(out)),
+                    filter.getCondition());
+        }
+    }
+
+    /** Implementation of {@link org.apache.calcite.rel.core.Filter} in
+     * {@link JdbcConvention jdbc calling convention}. */
+    public static class JdbcFilter extends Filter implements JdbcRel {
+        public JdbcFilter(
+                RelOptCluster cluster,
+                RelTraitSet traitSet,
+                RelNode input,
+                RexNode condition) {
+            super(cluster, traitSet, input, condition);
+            assert getConvention() instanceof JdbcConvention;
+        }
+
+        @Override public RemoteJdbcRules.JdbcFilter copy(RelTraitSet traitSet, RelNode input,
+                                                   RexNode condition) {
+            return new RemoteJdbcRules.JdbcFilter(getCluster(), traitSet, input, condition);
+        }
+
+        @Override public JdbcImplementor.Result implement(JdbcImplementor implementor) {
+            return implementor.implement(this);
+        }
+
+        @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner, RelMetadataQuery mq) {
+            RelOptCost cost = super.computeSelfCost(planner, mq);
+            return cost.multiplyBy(RemoteJdbcConvention.COST_MULTIPLIER);
+        }
+    }
+
+    /**
+     * Rule to convert a {@link org.apache.calcite.rel.core.Aggregate}
+     * to a {@link RemoteJdbcRules.JdbcAggregate}.
+     */
+    public static class JdbcAggregateRule extends RemoteJdbcRules.JdbcConverterRule {
+        /** Creates a JdbcAggregateRule. */
+        public static RemoteJdbcRules.JdbcAggregateRule create(JdbcConvention out) {
+            return Config.INSTANCE
+                    .withConversion(Aggregate.class, Convention.NONE, out,
+                            "RemoteJdbcAggregateRule")
+                    .withRuleFactory(RemoteJdbcRules.JdbcAggregateRule::new)
+                    .toRule(RemoteJdbcRules.JdbcAggregateRule.class);
+        }
+
+        /** Called from the Config. */
+        protected JdbcAggregateRule(Config config) {
+            super(config);
+        }
+
+        @Override public @Nullable RelNode convert(RelNode rel) {
+            final Aggregate agg = (Aggregate) rel;
+            if (agg.getGroupSets().size() != 1) {
+                // GROUPING SETS not supported; see
+                // [CALCITE-734] Push GROUPING SETS to underlying SQL via JDBC adapter
+                return null;
+            }
+            final RelTraitSet traitSet =
+                    agg.getTraitSet().replace(out);
+            try {
+                return new RemoteJdbcRules.JdbcAggregate(rel.getCluster(), traitSet,
+                        convert(agg.getInput(), out), agg.getGroupSet(),
+                        agg.getGroupSets(), agg.getAggCallList());
+            } catch (InvalidRelException e) {
+                LOGGER.debug(e.toString());
+                return null;
+            }
+        }
+    }
+
+    /** Returns whether this JDBC data source can implement a given aggregate
+     * function. */
+    private static boolean canImplement(AggregateCall aggregateCall,
+                                        SqlDialect sqlDialect) {
+        return sqlDialect.supportsAggregateFunction(
+                aggregateCall.getAggregation().getKind())
+                && aggregateCall.distinctKeys == null;
+    }
+
+    /** Aggregate operator implemented in JDBC convention. */
+    public static class JdbcAggregate extends Aggregate implements JdbcRel {
+        public JdbcAggregate(
+                RelOptCluster cluster,
+                RelTraitSet traitSet,
+                RelNode input,
+                ImmutableBitSet groupSet,
+                @Nullable List<ImmutableBitSet> groupSets,
+                List<AggregateCall> aggCalls)
+                throws InvalidRelException {
+            super(cluster, traitSet, ImmutableList.of(), input, groupSet, groupSets, aggCalls);
+            assert getConvention() instanceof JdbcConvention;
+            assert this.groupSets.size() == 1 : "Grouping sets not supported";
+            final SqlDialect dialect = ((JdbcConvention) getConvention()).dialect;
+            for (AggregateCall aggCall : aggCalls) {
+                if (!canImplement(aggCall, dialect)) {
+                    throw new InvalidRelException("cannot implement aggregate function "
+                            + aggCall);
+                }
+                if (aggCall.hasFilter() && !dialect.supportsAggregateFunctionFilter()) {
+                    throw new InvalidRelException("dialect does not support aggregate "
+                            + "functions FILTER clauses");
+                }
+            }
+        }
+
+        @Deprecated // to be removed before 2.0
+        public JdbcAggregate(RelOptCluster cluster, RelTraitSet traitSet,
+                             RelNode input, boolean indicator, ImmutableBitSet groupSet,
+                             List<ImmutableBitSet> groupSets, List<AggregateCall> aggCalls)
+                throws InvalidRelException {
+            this(cluster, traitSet, input, groupSet, groupSets, aggCalls);
+            checkIndicator(indicator);
+        }
+
+        @Override public RemoteJdbcRules.JdbcAggregate copy(RelTraitSet traitSet, RelNode input,
+                                                      ImmutableBitSet groupSet,
+                                                      @Nullable List<ImmutableBitSet> groupSets, List<AggregateCall> aggCalls) {
+            try {
+                return new RemoteJdbcRules.JdbcAggregate(getCluster(), traitSet, input,
+                        groupSet, groupSets, aggCalls);
+            } catch (InvalidRelException e) {
+                // Semantic error not possible. Must be a bug. Convert to
+                // internal error.
+                throw new AssertionError(e);
+            }
+        }
+
+        @Override public JdbcImplementor.Result implement(JdbcImplementor implementor) {
+            return implementor.implement(this);
+        }
+
+        @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner, RelMetadataQuery mq) {
+            RelOptCost cost = super.computeSelfCost(planner, mq);
+            return cost.multiplyBy(RemoteJdbcConvention.COST_MULTIPLIER);
+        }
+    }
+
+    /**
+     * Rule to convert a {@link org.apache.calcite.rel.core.Sort} to an
+     * {@link RemoteJdbcRules.JdbcSort}.
+     */
+    public static class JdbcSortRule extends RemoteJdbcRules.JdbcConverterRule {
+        /** Creates a JdbcSortRule. */
+        public static RemoteJdbcRules.JdbcSortRule create(JdbcConvention out) {
+            return Config.INSTANCE
+                    .withConversion(Sort.class, Convention.NONE, out, "RemoteJdbcSortRule")
+                    .withRuleFactory(RemoteJdbcRules.JdbcSortRule::new)
+                    .toRule(RemoteJdbcRules.JdbcSortRule.class);
+        }
+
+        /** Called from the Config. */
+        protected JdbcSortRule(Config config) {
+            super(config);
+        }
+
+        @Override public @Nullable RelNode convert(RelNode rel) {
+            return convert((Sort) rel, true);
+        }
+
+        /**
+         * Converts a {@code Sort} into a {@code JdbcSort}.
+         *
+         * @param sort Sort operator to convert
+         * @param convertInputTraits Whether to convert input to {@code sort}'s
+         *                            JDBC convention
+         * @return A new JdbcSort
+         */
+        public RelNode convert(Sort sort, boolean convertInputTraits) {
+            final RelTraitSet traitSet = sort.getTraitSet().replace(out);
+
+            final RelNode input;
+            if (convertInputTraits) {
+                final RelTraitSet inputTraitSet = sort.getInput().getTraitSet().replace(out);
+                input = convert(sort.getInput(), inputTraitSet);
+            } else {
+                input = sort.getInput();
+            }
+
+            return new RemoteJdbcRules.JdbcSort(sort.getCluster(), traitSet,
+                    input, sort.getCollation(), sort.offset, sort.fetch);
+        }
+    }
+
+    /** Sort operator implemented in JDBC convention. */
+    public static class JdbcSort
+            extends Sort
+            implements JdbcRel {
+        public JdbcSort(
+                RelOptCluster cluster,
+                RelTraitSet traitSet,
+                RelNode input,
+                RelCollation collation,
+                @Nullable RexNode offset,
+                @Nullable RexNode fetch) {
+            super(cluster, traitSet, input, collation, offset, fetch);
+            assert getConvention() instanceof JdbcConvention;
+            assert getConvention() == input.getConvention();
+        }
+
+        @Override public RemoteJdbcRules.JdbcSort copy(RelTraitSet traitSet, RelNode newInput,
+                                                 RelCollation newCollation, @Nullable RexNode offset, @Nullable RexNode fetch) {
+            return new RemoteJdbcRules.JdbcSort(getCluster(), traitSet, newInput, newCollation,
+                    offset, fetch);
+        }
+
+        @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
+                                                              RelMetadataQuery mq) {
+            RelOptCost cost = super.computeSelfCost(planner, mq);
+            if (cost == null) {
+                return null;
+            }
+            return cost.multiplyBy(RemoteJdbcConvention.COST_MULTIPLIER);
+        }
+
+        @Override public JdbcImplementor.Result implement(JdbcImplementor implementor) {
+            return implementor.implement(this);
+        }
+    }
+
+    /**
+     * Rule to convert an {@link org.apache.calcite.rel.core.Union} to a
+     * {@link RemoteJdbcRules.JdbcUnion}.
+     */
+    public static class JdbcUnionRule extends RemoteJdbcRules.JdbcConverterRule {
+        /** Creates a JdbcUnionRule. */
+        public static RemoteJdbcRules.JdbcUnionRule create(JdbcConvention out) {
+            return Config.INSTANCE
+                    .withConversion(Union.class, Convention.NONE, out, "RemoteJdbcUnionRule")
+                    .withRuleFactory(RemoteJdbcRules.JdbcUnionRule::new)
+                    .toRule(RemoteJdbcRules.JdbcUnionRule.class);
+        }
+
+        /** Called from the Config. */
+        protected JdbcUnionRule(Config config) {
+            super(config);
+        }
+
+        @Override public @Nullable RelNode convert(RelNode rel) {
+            final Union union = (Union) rel;
+            final RelTraitSet traitSet =
+                    union.getTraitSet().replace(out);
+            return new RemoteJdbcRules.JdbcUnion(rel.getCluster(), traitSet,
+                    convertList(union.getInputs(), out), union.all);
+        }
+    }
+
+    /** Union operator implemented in JDBC convention. */
+    public static class JdbcUnion extends Union implements JdbcRel {
+        public JdbcUnion(
+                RelOptCluster cluster,
+                RelTraitSet traitSet,
+                List<RelNode> inputs,
+                boolean all) {
+            super(cluster, traitSet, inputs, all);
+        }
+
+        @Override public RemoteJdbcRules.JdbcUnion copy(
+                RelTraitSet traitSet, List<RelNode> inputs, boolean all) {
+            return new RemoteJdbcRules.JdbcUnion(getCluster(), traitSet, inputs, all);
+        }
+
+        @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
+                                                              RelMetadataQuery mq) {
+            RelOptCost cost = super.computeSelfCost(planner, mq);
+            if (cost == null) {
+                return null;
+            }
+            return cost.multiplyBy(RemoteJdbcConvention.COST_MULTIPLIER);
+        }
+
+        @Override public JdbcImplementor.Result implement(JdbcImplementor implementor) {
+            return implementor.implement(this);
+        }
+    }
+
+    /**
+     * Rule to convert a {@link org.apache.calcite.rel.core.Intersect}
+     * to a {@link RemoteJdbcRules.JdbcIntersect}.
+     */
+    public static class JdbcIntersectRule extends RemoteJdbcRules.JdbcConverterRule {
+        /** Creates a JdbcIntersectRule. */
+        public static RemoteJdbcRules.JdbcIntersectRule create(JdbcConvention out) {
+            return Config.INSTANCE
+                    .withConversion(Intersect.class, Convention.NONE, out,
+                            "RemoteJdbcIntersectRule")
+                    .withRuleFactory(RemoteJdbcRules.JdbcIntersectRule::new)
+                    .toRule(RemoteJdbcRules.JdbcIntersectRule.class);
+        }
+
+        /** Called from the Config. */
+        protected JdbcIntersectRule(Config config) {
+            super(config);
+        }
+
+        @Override public @Nullable RelNode convert(RelNode rel) {
+            final Intersect intersect = (Intersect) rel;
+            if (intersect.all) {
+                return null; // INTERSECT ALL not implemented
+            }
+            final RelTraitSet traitSet =
+                    intersect.getTraitSet().replace(out);
+            return new RemoteJdbcRules.JdbcIntersect(rel.getCluster(), traitSet,
+                    convertList(intersect.getInputs(), out), false);
+        }
+    }
+
+    /** Intersect operator implemented in JDBC convention. */
+    public static class JdbcIntersect
+            extends Intersect
+            implements JdbcRel {
+        public JdbcIntersect(
+                RelOptCluster cluster,
+                RelTraitSet traitSet,
+                List<RelNode> inputs,
+                boolean all) {
+            super(cluster, traitSet, inputs, all);
+            assert !all;
+        }
+
+        @Override public RemoteJdbcRules.JdbcIntersect copy(
+                RelTraitSet traitSet, List<RelNode> inputs, boolean all) {
+            return new RemoteJdbcRules.JdbcIntersect(getCluster(), traitSet, inputs, all);
+        }
+
+        @Override public JdbcImplementor.Result implement(JdbcImplementor implementor) {
+            return implementor.implement(this);
+        }
+
+        @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner, RelMetadataQuery mq) {
+            RelOptCost cost = super.computeSelfCost(planner, mq);
+            return cost.multiplyBy(RemoteJdbcConvention.COST_MULTIPLIER);
+        }
+    }
+
+    /**
+     * Rule to convert a {@link org.apache.calcite.rel.core.Minus} to a
+     * {@link RemoteJdbcRules.JdbcMinus}.
+     */
+    public static class JdbcMinusRule extends RemoteJdbcRules.JdbcConverterRule {
+        /** Creates a JdbcMinusRule. */
+        public static RemoteJdbcRules.JdbcMinusRule create(JdbcConvention out) {
+            return Config.INSTANCE
+                    .withConversion(Minus.class, Convention.NONE, out, "RemoteJdbcMinusRule")
+                    .withRuleFactory(RemoteJdbcRules.JdbcMinusRule::new)
+                    .toRule(RemoteJdbcRules.JdbcMinusRule.class);
+        }
+
+        /** Called from the Config. */
+        protected JdbcMinusRule(Config config) {
+            super(config);
+        }
+
+        @Override public @Nullable RelNode convert(RelNode rel) {
+            final Minus minus = (Minus) rel;
+            if (minus.all) {
+                return null; // EXCEPT ALL not implemented
+            }
+            final RelTraitSet traitSet =
+                    rel.getTraitSet().replace(out);
+            return new RemoteJdbcRules.JdbcMinus(rel.getCluster(), traitSet,
+                    convertList(minus.getInputs(), out), false);
+        }
+    }
+
+    /** Minus operator implemented in JDBC convention. */
+    public static class JdbcMinus extends Minus implements JdbcRel {
+        public JdbcMinus(RelOptCluster cluster, RelTraitSet traitSet,
+                         List<RelNode> inputs, boolean all) {
+            super(cluster, traitSet, inputs, all);
+            assert !all;
+        }
+
+        @Override public RemoteJdbcRules.JdbcMinus copy(RelTraitSet traitSet, List<RelNode> inputs,
+                                                  boolean all) {
+            return new RemoteJdbcRules.JdbcMinus(getCluster(), traitSet, inputs, all);
+        }
+
+        @Override public JdbcImplementor.Result implement(JdbcImplementor implementor) {
+            return implementor.implement(this);
+        }
+
+        @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner, RelMetadataQuery mq) {
+            RelOptCost cost = super.computeSelfCost(planner, mq);
+            return cost.multiplyBy(RemoteJdbcConvention.COST_MULTIPLIER);
+        }
+    }
+
+    /** Rule that converts a table-modification to JDBC. */
+    public static class JdbcTableModificationRule extends RemoteJdbcRules.JdbcConverterRule {
+        /** Creates a JdbcToEnumerableConverterRule. */
+        public static RemoteJdbcRules.JdbcTableModificationRule create(JdbcConvention out) {
+            return Config.INSTANCE
+                    .withConversion(TableModify.class, Convention.NONE, out,
+                            "JdbcTableModificationRule")
+                    .withRuleFactory(RemoteJdbcRules.JdbcTableModificationRule::new)
+                    .toRule(RemoteJdbcRules.JdbcTableModificationRule.class);
+        }
+
+        /** Called from the Config. */
+        protected JdbcTableModificationRule(Config config) {
+            super(config);
+        }
+
+        @Override public @Nullable RelNode convert(RelNode rel) {
+            final TableModify modify =
+                    (TableModify) rel;
+            final ModifiableTable modifiableTable =
+                    modify.getTable().unwrap(ModifiableTable.class);
+            if (modifiableTable == null) {
+                return null;
+            }
+            final RelTraitSet traitSet =
+                    modify.getTraitSet().replace(out);
+            return new RemoteJdbcRules.JdbcTableModify(
+                    modify.getCluster(), traitSet,
+                    modify.getTable(),
+                    modify.getCatalogReader(),
+                    convert(modify.getInput(), traitSet),
+                    modify.getOperation(),
+                    modify.getUpdateColumnList(),
+                    modify.getSourceExpressionList(),
+                    modify.isFlattened());
+        }
+    }
+
+    /** Table-modification operator implemented in JDBC convention. */
+    public static class JdbcTableModify extends TableModify implements JdbcRel {
+        public JdbcTableModify(RelOptCluster cluster,
+                               RelTraitSet traitSet,
+                               RelOptTable table,
+                               Prepare.CatalogReader catalogReader,
+                               RelNode input,
+                               Operation operation,
+                               @Nullable List<String> updateColumnList,
+                               @Nullable List<RexNode> sourceExpressionList,
+                               boolean flattened) {
+            super(cluster, traitSet, table, catalogReader, input, operation,
+                    updateColumnList, sourceExpressionList, flattened);
+            assert input.getConvention() instanceof JdbcConvention;
+            assert getConvention() instanceof JdbcConvention;
+            final ModifiableTable modifiableTable =
+                    table.unwrap(ModifiableTable.class);
+            if (modifiableTable == null) {
+                throw new AssertionError(); // TODO: user error in validator
+            }
+            Expression expression = table.getExpression(Queryable.class);
+            if (expression == null) {
+                throw new AssertionError(); // TODO: user error in validator
+            }
+        }
+
+        @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
+                                                              RelMetadataQuery mq) {
+            RelOptCost cost = super.computeSelfCost(planner, mq);
+            if (cost == null) {
+                return null;
+            }
+            return cost.multiplyBy(RemoteJdbcConvention.COST_MULTIPLIER);
+        }
+
+        @Override public RelNode copy(RelTraitSet traitSet, List<RelNode> inputs) {
+            return new RemoteJdbcRules.JdbcTableModify(
+                    getCluster(), traitSet, getTable(), getCatalogReader(),
+                    sole(inputs), getOperation(), getUpdateColumnList(),
+                    getSourceExpressionList(), isFlattened());
+        }
+
+        @Override public JdbcImplementor.Result implement(JdbcImplementor implementor) {
+            return implementor.implement(this);
+        }
+    }
+
+    /** Rule that converts a values operator to JDBC. */
+    public static class JdbcValuesRule extends RemoteJdbcRules.JdbcConverterRule {
+        /** Creates a JdbcValuesRule. */
+        public static RemoteJdbcRules.JdbcValuesRule create(JdbcConvention out) {
+            return Config.INSTANCE
+                    .withConversion(Values.class, Convention.NONE, out, "JdbcValuesRule")
+                    .withRuleFactory(RemoteJdbcRules.JdbcValuesRule::new)
+                    .toRule(RemoteJdbcRules.JdbcValuesRule.class);
+        }
+
+        /** Called from the Config. */
+        protected JdbcValuesRule(Config config) {
+            super(config);
+        }
+
+        @Override public @Nullable RelNode convert(RelNode rel) {
+            Values values = (Values) rel;
+            return new RemoteJdbcRules.JdbcValues(values.getCluster(), values.getRowType(),
+                    values.getTuples(), values.getTraitSet().replace(out));
+        }
+    }
+
+    /** Values operator implemented in JDBC convention. */
+    public static class JdbcValues extends Values implements JdbcRel {
+        JdbcValues(RelOptCluster cluster, RelDataType rowType,
+                   ImmutableList<ImmutableList<RexLiteral>> tuples, RelTraitSet traitSet) {
+            super(cluster, rowType, tuples, traitSet);
+        }
+
+        @Override public RelNode copy(RelTraitSet traitSet, List<RelNode> inputs) {
+            assert inputs.isEmpty();
+            return new RemoteJdbcRules.JdbcValues(getCluster(), getRowType(), tuples, traitSet);
+        }
+
+        @Override public JdbcImplementor.Result implement(JdbcImplementor implementor) {
+            return implementor.implement(this);
+        }
+
+        @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner, RelMetadataQuery mq) {
+            RelOptCost cost = super.computeSelfCost(planner, mq);
+            return cost.multiplyBy(RemoteJdbcConvention.COST_MULTIPLIER);
+        }
+    }
+
+    /** Visitor that checks whether part of a projection is a user-defined
+     * function (UDF). */
+    private static class CheckingUserDefinedFunctionVisitor
+            extends RexVisitorImpl<Void> {
+
+        private boolean containsUsedDefinedFunction = false;
+
+        CheckingUserDefinedFunctionVisitor() {
+            super(true);
+        }
+
+        public boolean containsUserDefinedFunction() {
+            return containsUsedDefinedFunction;
+        }
+
+        @Override public Void visitCall(RexCall call) {
+            SqlOperator operator = call.getOperator();
+            if (operator instanceof SqlFunction
+                    && ((SqlFunction) operator).getFunctionType().isUserDefined()) {
+                containsUsedDefinedFunction |= true;
+            }
+            return super.visitCall(call);
+        }
+
     }
 }

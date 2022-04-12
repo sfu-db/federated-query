@@ -23,12 +23,16 @@ public class RemoteJdbcToEnumerableConverter extends JdbcToEnumerableConverter {
 
     @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
                                                           RelMetadataQuery mq) {
-
         RelOptCost cost = super.computeSelfCost(planner, mq);
         if (cost == null) {
             return null;
         }
-        // make cost on network transfer large and sensitive to # columns
+        // make cost on network transfer expensive and sensitive to # columns
         return cost.multiplyBy(10 * getInput().getRowType().getFieldCount());
+    }
+
+    @Override public double estimateRowCount(RelMetadataQuery mq) {
+        // inflate the row count in order to reduce local execution
+        return mq.getRowCount(input) * 10;
     }
 }
