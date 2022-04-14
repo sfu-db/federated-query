@@ -180,7 +180,7 @@ public class FederatedQueryRewriter {
         // Convert physical plan to sql
         RelToSqlConverter.Result res = sqlConverter.visitRoot(phyPlan);
         SqlNode resSqlNode = res.asQueryOrValues();
-        logger.debug("[Remaining SqlNode]\n{}", resSqlNode.toString());
+        logger.debug("[Remaining SqlNode]\n{}\n", resSqlNode.toString());
         String resSql = resSqlNode.toSqlString(dialect).getSql();
 
         FederatedPlan plan = visitor.getPlan();

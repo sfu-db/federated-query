@@ -35,7 +35,7 @@ public class DBSourceVisitor extends RelVisitor {
             final JdbcConvention jdbcConvention =
                     (JdbcConvention) requireNonNull(child.getConvention(),
                             () -> "child.getConvention() is null for " + child);
-            RelToSqlConverter sqlConverter = new RelToSqlConverter(jdbcConvention.dialect);
+            RemoteJdbcSqlImplementor sqlConverter = new RemoteJdbcSqlImplementor(jdbcConvention.dialect);
             RelToSqlConverter.Result res = sqlConverter.visitRoot(child);
             SqlNode resSqlNode = res.asQueryOrValues();
             String resSql = resSqlNode.toSqlString(jdbcConvention.dialect).getSql();
