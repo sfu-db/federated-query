@@ -20,12 +20,17 @@ public class FederatedQueryRewriterTest {
                 "org.postgresql.Driver",
                 "postgres",
                 "postgres");
-
         final DataSource ds2 = JdbcSchema.dataSource(
-                "jdbc:mysql://127.0.0.1:3306/tpchsf1",
-                "com.mysql.cj.jdbc.Driver",
-                "root",
-                "mysql");
+                "jdbc:postgresql://127.0.0.1:5433/tpchsf1",
+                "org.postgresql.Driver",
+                "postgres",
+                "postgres");
+
+//        final DataSource ds2 = JdbcSchema.dataSource(
+//                "jdbc:mysql://127.0.0.1:3306/tpchsf1",
+//                "com.mysql.cj.jdbc.Driver",
+//                "root",
+//                "mysql");
         HashMap<String, DataSource> dbConns = new HashMap<>();
         dbConns.put("db1", ds1);
         dbConns.put("db2", ds2);

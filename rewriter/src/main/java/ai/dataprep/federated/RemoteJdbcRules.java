@@ -280,6 +280,10 @@ public class RemoteJdbcRules {
                 case AND:
                 case OR:
                     operands = ((RexCall) node).getOperands();
+                    if ((operands.get(0) instanceof RexInputRef)
+                            && (operands.get(1) instanceof RexInputRef)) {
+                        return true;
+                    }
                     for (RexNode operand : operands) {
                         if (!canJoinOnCondition(operand)) {
                             return false;

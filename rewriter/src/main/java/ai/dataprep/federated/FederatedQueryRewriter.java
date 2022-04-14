@@ -12,10 +12,13 @@ import org.apache.calcite.plan.ConventionTraitDef;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelOptUtil;
+import org.apache.calcite.plan.hep.HepPlanner;
+import org.apache.calcite.plan.hep.HepProgramBuilder;
 import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.prepare.CalciteCatalogReader;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter;
+import org.apache.calcite.rel.rules.AggregateProjectConstantToDummyJoinRule;
 import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
@@ -122,8 +125,6 @@ public class FederatedQueryRewriter {
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
         // Initialize optimizer/planner with the necessary rules
-//        planner.addRule(CoreRules.FILTER_INTO_JOIN); // necessary to enable JDBCJoinRule
-//        planner.addRule(CoreRules.JOIN_CONDITION_PUSH);
         planner.addRule(FilterJoinRule.FilterIntoJoinRule.FilterIntoJoinRuleConfig.DEFAULT.toRule());
         planner.addRule(FilterJoinRule.JoinConditionPushRule.JoinConditionPushRuleConfig.DEFAULT.toRule());
         planner.addRule(CoreRules.PROJECT_JOIN_TRANSPOSE);
@@ -135,8 +136,8 @@ public class FederatedQueryRewriter {
         planner.addRule(EnumerableRules.ENUMERABLE_JOIN_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_AGGREGATE_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_SORT_RULE);
-        planner.addRule(RemoteJdbcLogicalWrapper.ENUMERABLE_WRAPPER_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_CORRELATE_RULE);
+        planner.addRule(RemoteJdbcLogicalWrapper.ENUMERABLE_WRAPPER_RULE);
 
         // Define the type of the output plan (in this case we want a physical plan in EnumerableConvention)
         logPlan = planner.changeTraits(logPlan, cluster.traitSet().replace(EnumerableConvention.INSTANCE));
@@ -144,7 +145,7 @@ public class FederatedQueryRewriter {
 
         // Start the optimization process to obtain the most efficient physical plan
         logger.debug("[Rules]\n{}", planner.getRules());
-        EnumerableRel phyPlan = (EnumerableRel) planner.findBestExp();
+        RelNode phyPlan = planner.findBestExp();
 
         logger.debug(
                 RelOptUtil.dumpPlan("[Physical plan]", phyPlan, SqlExplainFormat.TEXT,
@@ -159,6 +160,19 @@ public class FederatedQueryRewriter {
                 RelOptUtil.dumpPlan("[Remaining physical plan]", phyPlan, SqlExplainFormat.TEXT,
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
+        // Process before to sql
+        HepProgramBuilder hepProgramBuilder = new HepProgramBuilder();
+        hepProgramBuilder.addRuleInstance(
+                NestedLoopJoinExtractFilterRule.Config.DEFAULT.toRule());
+        HepPlanner hepPlanner = new HepPlanner(hepProgramBuilder.build());
+
+        hepPlanner.setRoot(phyPlan);
+        phyPlan = hepPlanner.findBestExp();
+
+        logger.debug(
+                RelOptUtil.dumpPlan("[Preprocessing]", phyPlan, SqlExplainFormat.TEXT,
+                        SqlExplainLevel.EXPPLAN_ATTRIBUTES));
+
         // Configure RelToSqlConverter
         SqlDialect dialect = SqlDialect.DatabaseProduct.POSTGRESQL.getDialect();
         RelToSqlConverter sqlConverter = new RelToSqlConverter(dialect);
@@ -166,6 +180,7 @@ public class FederatedQueryRewriter {
         // Convert physical plan to sql
         RelToSqlConverter.Result res = sqlConverter.visitRoot(phyPlan);
         SqlNode resSqlNode = res.asQueryOrValues();
+        logger.debug("[Remaining SqlNode]\n{}", resSqlNode.toString());
         String resSql = resSqlNode.toSqlString(dialect).getSql();
 
         FederatedPlan plan = visitor.getPlan();
