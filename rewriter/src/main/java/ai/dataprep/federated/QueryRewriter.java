@@ -12,7 +12,11 @@ import javax.sql.DataSource;
 import org.apache.calcite.adapter.enumerable.EnumerableConvention;
 import org.apache.calcite.adapter.enumerable.EnumerableRel;
 import org.apache.calcite.adapter.enumerable.EnumerableRules;
+import org.apache.calcite.adapter.enumerable.EnumerableTableScan;
+import org.apache.calcite.adapter.jdbc.JdbcConvention;
+import org.apache.calcite.adapter.jdbc.JdbcRel;
 import org.apache.calcite.adapter.jdbc.JdbcSchema;
+import org.apache.calcite.adapter.jdbc.JdbcToEnumerableConverter;
 import org.apache.calcite.config.CalciteConnectionConfig;
 import org.apache.calcite.config.CalciteConnectionConfigImpl;
 import org.apache.calcite.config.CalciteConnectionProperty;
@@ -25,6 +29,7 @@ import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.prepare.CalciteCatalogReader;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelVisitor;
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter;
 import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
@@ -41,6 +46,9 @@ import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.sql2rel.SqlToRelConverter;
 import org.apache.calcite.sql2rel.StandardConvertletTable;
+import org.checkerframework.checker.nullness.qual.Nullable;
+
+import static java.util.Objects.requireNonNull;
 
 public class QueryRewriter {
 
@@ -110,6 +118,13 @@ public class QueryRewriter {
         planner.addRule(CoreRules.JOIN_COMMUTE);
         planner.addRule(CoreRules.PROJECT_REMOVE);
         planner.addRule(CoreRules.PROJECT_JOIN_TRANSPOSE);
+        planner.addRule(EnumerableRules.ENUMERABLE_PROJECT_RULE);
+        planner.addRule(EnumerableRules.ENUMERABLE_FILTER_RULE);
+        planner.addRule(EnumerableRules.ENUMERABLE_JOIN_RULE);
+        planner.addRule(EnumerableRules.ENUMERABLE_AGGREGATE_RULE);
+        planner.addRule(EnumerableRules.ENUMERABLE_SORT_RULE);
+        planner.addRule(EnumerableRules.ENUMERABLE_CORRELATE_RULE);
+        planner.addRule(RemoteJdbcLogicalWrapper.ENUMERABLE_WRAPPER_RULE);
 
         // Define the type of the output plan (in this case we want a physical plan in
         // EnumerableConvention)
@@ -128,6 +143,13 @@ public class QueryRewriter {
                 RelOptUtil.dumpPlan("[Physical plan]", phyPlan, SqlExplainFormat.TEXT,
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
+        MyVisitor myVisitor = new MyVisitor();
+        phyPlan.childrenAccept(myVisitor);
+
+        System.out.println(
+                RelOptUtil.dumpPlan("[Physical plan after]", phyPlan, SqlExplainFormat.TEXT,
+                        SqlExplainLevel.EXPPLAN_ATTRIBUTES));
+
         // Configure RelToSqlConverter
         SqlDialect dialect = SqlDialect.DatabaseProduct.POSTGRESQL.getDialect();
         RelToSqlConverter sqlConverter = new RelToSqlConverter(dialect);
@@ -138,6 +160,21 @@ public class QueryRewriter {
         String resSql = resSqlNode.toSqlString(dialect).getSql();
 
         return resSql;
+    }
+
+    static public class MyVisitor extends RelVisitor {
+
+        @Override public void visit(RelNode node, int ordinal, @Nullable RelNode parent) {
+            if (node instanceof JdbcToEnumerableConverter) {
+                // Convert subtree to sql, do not go deeper
+                final JdbcRel child = (JdbcRel) node.getInput(0);
+                parent.replaceInput(ordinal, child);
+            }
+            else {
+                // Traverse child node
+                super.visit(node, ordinal, parent);
+            }
+        }
     }
 
 }
