@@ -10,10 +10,10 @@ rust file="test.sql":
 rust-test:
     cd connector-x/connectorx && cargo run --features src_postgres --features src_mysql --features dst_arrow --features federation --example test
 
-cat-single qid:
+@cat1 qid:
     cat fed-queries/q{{qid}}.sql | sed 's/db1.//g;s/db2.//g'
 
-cat qid:
+@cat qid:
     cat fed-queries/q{{qid}}.sql
 
 vim qid:
