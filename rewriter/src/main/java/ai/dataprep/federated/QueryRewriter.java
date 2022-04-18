@@ -118,6 +118,8 @@ public class QueryRewriter {
         planner.addRule(CoreRules.JOIN_COMMUTE);
         planner.addRule(CoreRules.PROJECT_REMOVE);
         planner.addRule(CoreRules.PROJECT_JOIN_TRANSPOSE);
+        planner.addRule(CoreRules.FILTER_PROJECT_TRANSPOSE);
+        planner.addRule(CoreRules.PROJECT_FILTER_TRANSPOSE);
         planner.addRule(EnumerableRules.ENUMERABLE_PROJECT_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_FILTER_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_JOIN_RULE);

@@ -25,6 +25,7 @@ import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.schema.Schemas;
 import org.apache.calcite.sql.*;
+import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
@@ -56,10 +57,10 @@ public class FederatedQueryRewriter {
         SqlDialectFactory dialectFactory = SqlDialectFactoryImpl.INSTANCE;
         final Expression expression =
                 Schemas.subSchemaExpression(parentSchema, name, JdbcSchema.class);
-        final SqlDialect dialect = JdbcSchema.createDialect(dialectFactory, dataSource);
+        final SqlDialect dialect = RemoteJdbcSchema.createDialect(dialectFactory, dataSource);
         final JdbcConvention convention =
                 new RemoteJdbcConvention(dialect, expression, name);
-        return new JdbcSchema(dataSource, dialect, convention, catalog, schema);
+        return new RemoteJdbcSchema(dataSource, dialect, convention, catalog, schema);
     }
 
     public FederatedPlan rewrite(HashMap<String, DataSource> dbConns, String sql) throws Exception {
@@ -128,16 +129,26 @@ public class FederatedQueryRewriter {
         planner.addRule(FilterJoinRule.FilterIntoJoinRule.FilterIntoJoinRuleConfig.DEFAULT.toRule());
         planner.addRule(FilterJoinRule.JoinConditionPushRule.JoinConditionPushRuleConfig.DEFAULT.toRule());
         planner.addRule(CoreRules.PROJECT_JOIN_TRANSPOSE);
+        planner.addRule(CoreRules.JOIN_PROJECT_BOTH_TRANSPOSE_INCLUDE_OUTER);
+        planner.addRule(CoreRules.JOIN_PUSH_EXPRESSIONS);
+        planner.addRule(CoreRules.JOIN_PUSH_TRANSITIVE_PREDICATES);
+        planner.addRule(CoreRules.PROJECT_FILTER_TRANSPOSE);
+        planner.addRule(CoreRules.FILTER_PROJECT_TRANSPOSE);
+        planner.addRule(CoreRules.PROJECT_AGGREGATE_MERGE);
+        planner.addRule(CoreRules.PROJECT_CORRELATE_TRANSPOSE);
+        planner.addRule(CoreRules.AGGREGATE_PROJECT_PULL_UP_CONSTANTS);
+        planner.addRule(CoreRules.AGGREGATE_PROJECT_MERGE);
         planner.addRule(CoreRules.PROJECT_REMOVE);
+        planner.addRule(CoreRules.AGGREGATE_REMOVE);
         planner.addRule(CoreRules.JOIN_ASSOCIATE);
         planner.addRule(CoreRules.JOIN_COMMUTE);
         planner.addRule(EnumerableRules.ENUMERABLE_PROJECT_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_FILTER_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_JOIN_RULE);
-        planner.addRule(EnumerableRules.ENUMERABLE_AGGREGATE_RULE);
+        planner.addRule(LocalAggregateRule.DEFAULT_CONFIG.toRule()); // support distinct
         planner.addRule(EnumerableRules.ENUMERABLE_SORT_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_CORRELATE_RULE);
-        planner.addRule(RemoteJdbcLogicalWrapper.ENUMERABLE_WRAPPER_RULE);
+        planner.addRule(RemoteJdbcLogicalWrapper.ENUMERABLE_WRAPPER_RULE); // enable JoinAssociate on different JDBC sources
 
         // Define the type of the output plan (in this case we want a physical plan in EnumerableConvention)
         logPlan = planner.changeTraits(logPlan, cluster.traitSet().replace(EnumerableConvention.INSTANCE));
@@ -163,7 +174,7 @@ public class FederatedQueryRewriter {
         // Process before to sql
         HepProgramBuilder hepProgramBuilder = new HepProgramBuilder();
         hepProgramBuilder.addRuleInstance(
-                NestedLoopJoinExtractFilterRule.Config.DEFAULT.toRule());
+                NestedLoopJoinExtractFilterRule.Config.DEFAULT.toRule()); // since DataFusion cannot handle cases like (a inner join b on a.id == 1 and b.id == 3)
         HepPlanner hepPlanner = new HepPlanner(hepProgramBuilder.build());
 
         hepPlanner.setRoot(phyPlan);
