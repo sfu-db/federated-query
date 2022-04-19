@@ -10,7 +10,7 @@ from
 	db1.orders,
 	db2.lineitem
 where
-	o_orderkey in (
+    o_orderkey in (
 		select
 			l_orderkey
 		from
@@ -27,3 +27,9 @@ group by
 	o_orderkey,
 	o_orderdate,
 	o_totalprice
+order by
+        o_totalprice desc,
+        o_orderdate
+order by
+        o_totalprice desc,
+        o_orderdate

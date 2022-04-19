@@ -18,7 +18,6 @@ import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.prepare.CalciteCatalogReader;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter;
-import org.apache.calcite.rel.rules.AggregateProjectConstantToDummyJoinRule;
 import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
@@ -129,15 +128,18 @@ public class FederatedQueryRewriter {
         planner.addRule(FilterJoinRule.FilterIntoJoinRule.FilterIntoJoinRuleConfig.DEFAULT.toRule());
         planner.addRule(FilterJoinRule.JoinConditionPushRule.JoinConditionPushRuleConfig.DEFAULT.toRule());
         planner.addRule(CoreRules.PROJECT_JOIN_TRANSPOSE);
-        planner.addRule(CoreRules.JOIN_PROJECT_BOTH_TRANSPOSE_INCLUDE_OUTER);
-        planner.addRule(CoreRules.JOIN_PUSH_EXPRESSIONS);
-        planner.addRule(CoreRules.JOIN_PUSH_TRANSITIVE_PREDICATES);
         planner.addRule(CoreRules.PROJECT_FILTER_TRANSPOSE);
-        planner.addRule(CoreRules.FILTER_PROJECT_TRANSPOSE);
-        planner.addRule(CoreRules.PROJECT_AGGREGATE_MERGE);
+        planner.addRule(CoreRules.FILTER_AGGREGATE_TRANSPOSE);
         planner.addRule(CoreRules.PROJECT_CORRELATE_TRANSPOSE);
-        planner.addRule(CoreRules.AGGREGATE_PROJECT_PULL_UP_CONSTANTS);
+        planner.addRule(CoreRules.FILTER_PROJECT_TRANSPOSE);
         planner.addRule(CoreRules.AGGREGATE_PROJECT_MERGE);
+
+//        planner.addRule(CoreRules.JOIN_PROJECT_BOTH_TRANSPOSE_INCLUDE_OUTER);
+//        planner.addRule(CoreRules.JOIN_PUSH_EXPRESSIONS);
+//        planner.addRule(CoreRules.JOIN_PUSH_TRANSITIVE_PREDICATES);
+//        planner.addRule(CoreRules.PROJECT_AGGREGATE_MERGE);
+//        planner.addRule(CoreRules.AGGREGATE_PROJECT_PULL_UP_CONSTANTS);
+
         planner.addRule(CoreRules.PROJECT_REMOVE);
         planner.addRule(CoreRules.AGGREGATE_REMOVE);
         planner.addRule(CoreRules.JOIN_ASSOCIATE);
@@ -145,9 +147,9 @@ public class FederatedQueryRewriter {
         planner.addRule(EnumerableRules.ENUMERABLE_PROJECT_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_FILTER_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_JOIN_RULE);
-        planner.addRule(LocalAggregateRule.DEFAULT_CONFIG.toRule()); // support distinct
         planner.addRule(EnumerableRules.ENUMERABLE_SORT_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_CORRELATE_RULE);
+        planner.addRule(LocalAggregateRule.DEFAULT_CONFIG.toRule()); // support distinct
         planner.addRule(RemoteJdbcLogicalWrapper.ENUMERABLE_WRAPPER_RULE); // enable JoinAssociate on different JDBC sources
 
         // Define the type of the output plan (in this case we want a physical plan in EnumerableConvention)
@@ -158,11 +160,11 @@ public class FederatedQueryRewriter {
         logger.debug("[Rules]\n{}", planner.getRules());
         RelNode phyPlan = planner.findBestExp();
 
+        logger.debug("Graph:\n{}", planner.toDot());
+
         logger.debug(
                 RelOptUtil.dumpPlan("[Physical plan]", phyPlan, SqlExplainFormat.TEXT,
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
-
-//        logger.debug("Graph:\n{}", planner.toDot());
 
         DBSourceVisitor visitor = new DBSourceVisitor();
         phyPlan.childrenAccept(visitor);
@@ -172,9 +174,11 @@ public class FederatedQueryRewriter {
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
         // Process before to sql
+        // https://github.com/apache/arrow-datafusion/issues/2230 (fixed)
+        // https://github.com/apache/arrow-datafusion/issues/2271
         HepProgramBuilder hepProgramBuilder = new HepProgramBuilder();
         hepProgramBuilder.addRuleInstance(
-                NestedLoopJoinExtractFilterRule.Config.DEFAULT.toRule()); // since DataFusion cannot handle cases like (a inner join b on a.id == 1 and b.id == 3)
+                NestedLoopJoinExtractFilterRule.Config.DEFAULT.toRule());
         HepPlanner hepPlanner = new HepPlanner(hepProgramBuilder.build());
 
         hepPlanner.setRoot(phyPlan);
@@ -185,7 +189,7 @@ public class FederatedQueryRewriter {
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
         // Configure RelToSqlConverter
-        SqlDialect dialect = SqlDialect.DatabaseProduct.POSTGRESQL.getDialect();
+        SqlDialect dialect = new DataFusionSqlDialect(PostgresqlSqlDialect.DEFAULT_CONTEXT);
         RelToSqlConverter sqlConverter = new RelToSqlConverter(dialect);
 
         // Convert physical plan to sql

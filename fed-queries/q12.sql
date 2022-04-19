@@ -24,3 +24,5 @@ where
 	and l_receiptdate < date '1994-01-01' + interval '1' year
 group by
 	l_shipmode
+order by
+        l_shipmode

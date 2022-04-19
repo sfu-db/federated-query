@@ -33,3 +33,5 @@ from
 	) as all_nations
 group by
 	o_year
+order by
+        o_year

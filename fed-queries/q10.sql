@@ -27,3 +27,5 @@ group by
 	n_name,
 	c_address,
 	c_comment
+order by
+        revenue desc

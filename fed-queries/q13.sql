@@ -15,3 +15,6 @@ from
 	) as c_orders (c_custkey, c_count)
 group by
 	c_count
+order by
+        custdist desc,
+        c_count desc

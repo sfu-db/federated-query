@@ -34,3 +34,6 @@ where
 	and n_name = 'UNITED KINGDOM'
 group by
 	s_name
+order by
+        numwait desc,
+        s_name
