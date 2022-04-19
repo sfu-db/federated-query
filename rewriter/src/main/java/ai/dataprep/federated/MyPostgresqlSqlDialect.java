@@ -1,13 +1,10 @@
 package ai.dataprep.federated;
 
-import com.sun.org.apache.xpath.internal.operations.Bool;
-import org.apache.calcite.avatica.util.TimeUnitRange;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
-import org.apache.calcite.sql.fun.SqlFloorFunction;
 
 public class MyPostgresqlSqlDialect extends PostgresqlSqlDialect {
     /**
