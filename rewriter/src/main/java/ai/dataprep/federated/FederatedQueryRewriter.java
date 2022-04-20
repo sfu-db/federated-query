@@ -178,13 +178,13 @@ public class FederatedQueryRewriter {
         // Process before to sql
         // https://github.com/apache/arrow-datafusion/issues/2230 (fixed)
         // https://github.com/apache/arrow-datafusion/issues/2271
-//        HepProgramBuilder hepProgramBuilder = new HepProgramBuilder();
-//        hepProgramBuilder.addRuleInstance(
-//                NestedLoopJoinExtractFilterRule.Config.DEFAULT.toRule());
-//        HepPlanner hepPlanner = new HepPlanner(hepProgramBuilder.build());
-//
-//        hepPlanner.setRoot(phyPlan);
-//        phyPlan = hepPlanner.findBestExp();
+        HepProgramBuilder hepProgramBuilder = new HepProgramBuilder();
+        hepProgramBuilder.addRuleInstance(
+                NestedLoopJoinExtractFilterRule.Config.DEFAULT.toRule());
+        HepPlanner hepPlanner = new HepPlanner(hepProgramBuilder.build());
+
+        hepPlanner.setRoot(phyPlan);
+        phyPlan = hepPlanner.findBestExp();
 
         logger.debug(
                 RelOptUtil.dumpPlan("[Preprocessing]", phyPlan, SqlExplainFormat.TEXT,
