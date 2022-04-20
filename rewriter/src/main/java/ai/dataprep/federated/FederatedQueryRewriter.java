@@ -125,8 +125,8 @@ public class FederatedQueryRewriter {
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
         // Initialize optimizer/planner with the necessary rules
-        planner.addRule(FilterJoinRule.FilterIntoJoinRule.FilterIntoJoinRuleConfig.DEFAULT.toRule());
-        planner.addRule(FilterJoinRule.JoinConditionPushRule.JoinConditionPushRuleConfig.DEFAULT.toRule());
+        planner.addRule(FederatedFilterJoinRule.FilterIntoJoinRule.FilterIntoJoinRuleConfig.DEFAULT.toRule());
+        planner.addRule(FederatedFilterJoinRule.JoinConditionPushRule.JoinConditionPushRuleConfig.DEFAULT.toRule());
         planner.addRule(CoreRules.PROJECT_JOIN_TRANSPOSE);
         planner.addRule(CoreRules.PROJECT_FILTER_TRANSPOSE);
         planner.addRule(CoreRules.FILTER_AGGREGATE_TRANSPOSE);
@@ -151,6 +151,8 @@ public class FederatedQueryRewriter {
         planner.addRule(EnumerableRules.ENUMERABLE_CORRELATE_RULE);
         planner.addRule(LocalAggregateRule.DEFAULT_CONFIG.toRule()); // support distinct
         planner.addRule(RemoteJdbcLogicalWrapper.ENUMERABLE_WRAPPER_RULE); // enable JoinAssociate on different JDBC sources
+        planner.addRule(ConditionRules.FilterConditionRule.FilterConfig.DEFAULT.toRule());
+        planner.addRule(ConditionRules.JoinConditionRule.JoinConfig.DEFAULT.toRule());
 
         // Define the type of the output plan (in this case we want a physical plan in EnumerableConvention)
         logPlan = planner.changeTraits(logPlan, cluster.traitSet().replace(EnumerableConvention.INSTANCE));
@@ -160,7 +162,7 @@ public class FederatedQueryRewriter {
         logger.debug("[Rules]\n{}", planner.getRules());
         RelNode phyPlan = planner.findBestExp();
 
-        logger.debug("Graph:\n{}", planner.toDot());
+//        logger.debug("Graph:\n{}", planner.toDot());
 
         logger.debug(
                 RelOptUtil.dumpPlan("[Physical plan]", phyPlan, SqlExplainFormat.TEXT,
@@ -176,13 +178,13 @@ public class FederatedQueryRewriter {
         // Process before to sql
         // https://github.com/apache/arrow-datafusion/issues/2230 (fixed)
         // https://github.com/apache/arrow-datafusion/issues/2271
-        HepProgramBuilder hepProgramBuilder = new HepProgramBuilder();
-        hepProgramBuilder.addRuleInstance(
-                NestedLoopJoinExtractFilterRule.Config.DEFAULT.toRule());
-        HepPlanner hepPlanner = new HepPlanner(hepProgramBuilder.build());
-
-        hepPlanner.setRoot(phyPlan);
-        phyPlan = hepPlanner.findBestExp();
+//        HepProgramBuilder hepProgramBuilder = new HepProgramBuilder();
+//        hepProgramBuilder.addRuleInstance(
+//                NestedLoopJoinExtractFilterRule.Config.DEFAULT.toRule());
+//        HepPlanner hepPlanner = new HepPlanner(hepProgramBuilder.build());
+//
+//        hepPlanner.setRoot(phyPlan);
+//        phyPlan = hepPlanner.findBestExp();
 
         logger.debug(
                 RelOptUtil.dumpPlan("[Preprocessing]", phyPlan, SqlExplainFormat.TEXT,

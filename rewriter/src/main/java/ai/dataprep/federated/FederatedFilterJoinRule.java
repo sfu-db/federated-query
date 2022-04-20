@@ -7,14 +7,12 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
-import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.rules.TransformationRule;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.*;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.tools.RelBuilder;
-import org.apache.calcite.tools.RelBuilderFactory;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
@@ -32,7 +30,7 @@ import static org.apache.calcite.plan.RelOptUtil.conjunctions;
  *
  * @param <C> Configuration type
  */
-public abstract class FilterJoinRule<C extends FilterJoinRule.Config>
+public abstract class FederatedFilterJoinRule<C extends FederatedFilterJoinRule.Config>
     extends RelRule<C>
     implements TransformationRule {
   /** Predicate that always returns true. With this predicate, every filter
@@ -41,7 +39,7 @@ public abstract class FilterJoinRule<C extends FilterJoinRule.Config>
   public static final Predicate TRUE_PREDICATE = (join, joinType, exp) -> true;
 
   /** Creates a FilterJoinRule. */
-  protected FilterJoinRule(C config) {
+  protected FederatedFilterJoinRule(C config) {
     super(config);
   }
 
@@ -362,7 +360,7 @@ public abstract class FilterJoinRule<C extends FilterJoinRule.Config>
 
   /** Rule that pushes parts of the join condition to its inputs. */
   public static class JoinConditionPushRule
-      extends FilterJoinRule<JoinConditionPushRule.JoinConditionPushRuleConfig> {
+      extends FederatedFilterJoinRule<JoinConditionPushRule.JoinConditionPushRuleConfig> {
     /** Creates a JoinConditionPushRule. */
     protected JoinConditionPushRule(JoinConditionPushRuleConfig config) {
       super(config);
@@ -375,7 +373,7 @@ public abstract class FilterJoinRule<C extends FilterJoinRule.Config>
 
     /** Rule configuration. */
     @Value.Immutable(singleton = false)
-    public interface JoinConditionPushRuleConfig extends FilterJoinRule.Config {
+    public interface JoinConditionPushRuleConfig extends FederatedFilterJoinRule.Config {
       JoinConditionPushRuleConfig DEFAULT = ImmutableJoinConditionPushRuleConfig
           .of((join, joinType, exp) -> true)
           .withOperandSupplier(b ->
@@ -393,7 +391,7 @@ public abstract class FilterJoinRule<C extends FilterJoinRule.Config>
    */
 //   * @see CoreRules#FILTER_INTO_JOIN */
   public static class FilterIntoJoinRule
-      extends FilterJoinRule<FilterIntoJoinRule.FilterIntoJoinRuleConfig> {
+      extends FederatedFilterJoinRule<FilterIntoJoinRule.FilterIntoJoinRuleConfig> {
     /** Creates a FilterIntoJoinRule. */
     protected FilterIntoJoinRule(FilterIntoJoinRuleConfig config) {
       super(config);
@@ -407,7 +405,7 @@ public abstract class FilterJoinRule<C extends FilterJoinRule.Config>
 
     /** Rule configuration. */
     @Value.Immutable(singleton = false)
-    public interface FilterIntoJoinRuleConfig extends FilterJoinRule.Config {
+    public interface FilterIntoJoinRuleConfig extends FederatedFilterJoinRule.Config {
       FilterIntoJoinRuleConfig DEFAULT =
           ImmutableFilterIntoJoinRuleConfig.of((join, joinType, exp) -> true)
               .withOperandSupplier(b0 ->
