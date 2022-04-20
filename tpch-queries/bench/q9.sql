@@ -1,5 +1,5 @@
 select
-	db2.nation,
+	nation,
 	o_year,
 	sum(amount) as sum_profit
 from
@@ -25,8 +25,8 @@ from
 			and p_name like '%green%'
 	) as profit
 group by
-	db2.nation,
+	nation,
 	o_year
 order by
-	db2.nation,
+	nation,
 	o_year desc

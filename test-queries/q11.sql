@@ -13,7 +13,7 @@ group by
 	ps_partkey having
 		sum(ps_supplycost * ps_availqty) > (
 			select
-				sum(ps_supplycost * ps_availqty) * 0.0001000000
+				sum(ps_supplycost * ps_availqty) * 0.00001000000
 			from
 				db1.partsupp,
 				db1.supplier,
@@ -24,4 +24,4 @@ group by
 				and n_name = 'INDONESIA'
 		)
 order by
-        value desc
+        myvalue desc
