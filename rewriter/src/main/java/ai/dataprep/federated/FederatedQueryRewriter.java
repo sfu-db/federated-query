@@ -148,6 +148,7 @@ public class FederatedQueryRewriter {
         planner.addRule(EnumerableRules.ENUMERABLE_FILTER_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_JOIN_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_SORT_RULE);
+        planner.addRule(EnumerableRules.ENUMERABLE_LIMIT_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_CORRELATE_RULE);
         planner.addRule(LocalAggregateRule.DEFAULT_CONFIG.toRule()); // support distinct
         planner.addRule(RemoteJdbcLogicalWrapper.ENUMERABLE_WRAPPER_RULE); // enable JoinAssociate on different JDBC sources
@@ -192,7 +193,7 @@ public class FederatedQueryRewriter {
 
         // Configure RelToSqlConverter
         SqlDialect dialect = new DataFusionSqlDialect(PostgresqlSqlDialect.DEFAULT_CONTEXT);
-        RelToSqlConverter sqlConverter = new RelToSqlConverter(dialect);
+        DataFusionSqlImplementor sqlConverter = new DataFusionSqlImplementor(dialect);
 
         // Convert physical plan to sql
         RelToSqlConverter.Result res = sqlConverter.visitRoot(phyPlan);

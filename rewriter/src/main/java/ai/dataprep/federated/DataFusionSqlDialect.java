@@ -2,8 +2,11 @@ package ai.dataprep.federated;
 
 import org.apache.calcite.sql.*;
 import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.HashMap;
+
+import static java.util.Objects.requireNonNull;
 
 public class DataFusionSqlDialect extends PostgresqlSqlDialect {
     /**
@@ -13,6 +16,13 @@ public class DataFusionSqlDialect extends PostgresqlSqlDialect {
      */
     public DataFusionSqlDialect(Context context) {
         super(context);
+    }
+
+    @Override public void unparseOffsetFetch(SqlWriter writer, @Nullable SqlNode offset,
+                                      @Nullable SqlNode fetch) {
+        writer.keyword("LIMIT");
+        requireNonNull(fetch, "fetch");
+        fetch.unparse(writer, -1, -1);
     }
 
     @Override public void unparseCall(SqlWriter writer, SqlCall call,
