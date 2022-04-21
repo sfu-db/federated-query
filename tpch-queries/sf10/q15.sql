@@ -8,7 +8,7 @@ create view revenue0 (supplier_no, total_revenue) as
 		l_shipdate >= date '1996-01-01'
 		and l_shipdate < date '1996-01-01' + interval '3' month
 	group by
-		l_suppkey
+		l_suppkey;
 select
 	s_suppkey,
 	s_name,
@@ -27,5 +27,5 @@ where
 			revenue0
 	)
 order by
-	s_suppkey
+	s_suppkey;
 drop view revenue0
