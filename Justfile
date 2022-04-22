@@ -40,4 +40,5 @@ gen-bench-queries inpath outpath:
     cat {{inpath}}/q18.sql | sed 's/lineitem/db1.lineitem/g;s/orders/db1.orders/g;s/customer/db2.customer/g' > {{outpath}}/q18.sql
     cat {{inpath}}/q19.sql | sed 's/lineitem/db1.lineitem/g;s/\tpart/\tdb2.part/g' > {{outpath}}/q19.sql
     cat {{inpath}}/q20.sql | sed 's/partsupp/db1.partsupp/g;s/\tpart/\tdb1.part/g;s/supplier/db1.supplier/g;s/lineitem/db1.lineitem/g;s/\tnation/\tdb2.nation/g' > {{outpath}}/q20.sql
+    cat {{inpath}}/q21.sql | sed 's/supplier/db1.supplier/g;s/lineitem/db1.lineitem/g;s/\torders/\tdb2.orders/g;s/\tnation/\tdb2.nation/g' > {{outpath}}/q21.sql
     cat {{inpath}}/q22.sql | sed 's/customer/db2.customer/g;s/\torders/\tdb1.orders/g' > {{outpath}}/q22.sql
