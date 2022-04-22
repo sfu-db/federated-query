@@ -182,6 +182,7 @@ public class RemoteJdbcRules {
     private static void foreachRule(JdbcConvention out,
                                     Consumer<RelRule<?>> consumer) {
         consumer.accept(RemoteJdbcToEnumerableConverterRule.create(out));
+//        consumer.accept(RemoteJdbcLogicalWrapper.RemoteJdbcWrapperRule.create(out));
         consumer.accept(RemoteJdbcRules.JdbcJoinRule.create(out));
         consumer.accept(RemoteJdbcRules.JdbcProjectRule.create(out));
         consumer.accept(RemoteJdbcRules.JdbcFilterRule.create(out));

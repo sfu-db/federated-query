@@ -13,9 +13,7 @@ import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.InvalidRelException;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
-import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.util.BuiltInMethod;
@@ -28,8 +26,9 @@ import java.util.List;
 
 import static java.util.Objects.requireNonNull;
 
-public class LocalAggregate extends EnumerableAggregateBase implements EnumerableRel {
-    public LocalAggregate(
+// code copy from EnumerableAggregate
+public class DataFusionAggregate extends EnumerableAggregateBase implements EnumerableRel {
+    public DataFusionAggregate(
             RelOptCluster cluster,
             RelTraitSet traitSet,
             RelNode input,
@@ -59,11 +58,11 @@ public class LocalAggregate extends EnumerableAggregateBase implements Enumerabl
         }
     }
 
-    @Override public LocalAggregate copy(RelTraitSet traitSet, RelNode input,
+    @Override public DataFusionAggregate copy(RelTraitSet traitSet, RelNode input,
                                               ImmutableBitSet groupSet,
                                               @Nullable List<ImmutableBitSet> groupSets, List<AggregateCall> aggCalls) {
         try {
-            return new LocalAggregate(getCluster(), traitSet, input,
+            return new DataFusionAggregate(getCluster(), traitSet, input,
                     groupSet, groupSets, aggCalls);
         } catch (InvalidRelException e) {
             // Semantic error not possible. Must be a bug. Convert to

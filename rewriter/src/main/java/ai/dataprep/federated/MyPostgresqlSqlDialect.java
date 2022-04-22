@@ -1,9 +1,6 @@
 package ai.dataprep.federated;
 
-import org.apache.calcite.sql.SqlCall;
-import org.apache.calcite.sql.SqlLiteral;
-import org.apache.calcite.sql.SqlNode;
-import org.apache.calcite.sql.SqlWriter;
+import org.apache.calcite.sql.*;
 import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
 
 public class MyPostgresqlSqlDialect extends PostgresqlSqlDialect {
@@ -31,5 +28,20 @@ public class MyPostgresqlSqlDialect extends PostgresqlSqlDialect {
             default:
                 super.unparseCall(writer, call, leftPrec, rightPrec);
         }
+    }
+
+    @Override public boolean supportsAggregateFunction(SqlKind kind) {
+        switch (kind) {
+            case COUNT:
+            case SUM:
+            case SUM0:
+            case MIN:
+            case MAX:
+            case AVG:
+                return true;
+            default:
+                break;
+        }
+        return false;
     }
 }

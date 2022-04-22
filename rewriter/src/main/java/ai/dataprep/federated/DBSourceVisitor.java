@@ -42,7 +42,7 @@ public class DBSourceVisitor extends RelVisitor {
             String dbName = jdbcConvention.getName().substring(5); // remove prefix "JDBC:"
             dbName = plan.add(dbName, resSql);
 
-            LocalTable table = new LocalTable(Collections.singletonList(dbName), child.getRowType());
+            DataFusionTable table = new DataFusionTable(Collections.singletonList(dbName), child.getRowType());
             EnumerableTableScan scan = EnumerableTableScan.create(node.getCluster(), table);
             parent.replaceInput(ordinal, scan);
         }

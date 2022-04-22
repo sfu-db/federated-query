@@ -22,6 +22,7 @@ import org.apache.calcite.config.CalciteConnectionConfigImpl;
 import org.apache.calcite.config.CalciteConnectionProperty;
 import org.apache.calcite.jdbc.CalciteConnection;
 import org.apache.calcite.jdbc.CalciteSchema;
+import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.plan.ConventionTraitDef;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptTable;
@@ -35,10 +36,8 @@ import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.schema.SchemaPlus;
-import org.apache.calcite.sql.SqlDialect;
-import org.apache.calcite.sql.SqlExplainFormat;
-import org.apache.calcite.sql.SqlExplainLevel;
-import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.schema.Schemas;
+import org.apache.calcite.sql.*;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
@@ -55,6 +54,21 @@ public class QueryRewriter {
     private static final RelOptTable.ViewExpander NOOP_EXPANDER = (type, query,
                                                                    schema, path) -> null;
 
+    public static JdbcSchema createJdbcSchema(
+            SchemaPlus parentSchema,
+            String name,
+            DataSource dataSource,
+            @Nullable String catalog,
+            @Nullable String schema) {
+        SqlDialectFactory dialectFactory = SqlDialectFactoryImpl.INSTANCE;
+        final Expression expression =
+                Schemas.subSchemaExpression(parentSchema, name, JdbcSchema.class);
+        final SqlDialect dialect = RemoteJdbcSchema.createDialect(dialectFactory, dataSource);
+        final JdbcConvention convention =
+                new RemoteJdbcConvention(dialect, expression, name);
+        return new RemoteJdbcSchema(dataSource, dialect, convention, catalog, schema);
+    }
+
     public static String rewrite(String sql) throws Exception {
         // Parse the query into an AST
         SqlParser parser = SqlParser.create(sql);
@@ -70,7 +84,7 @@ public class QueryRewriter {
                 "org.postgresql.Driver",
                 "postgres",
                 "postgres");
-        rootSchema.add("DB1", JdbcSchema.create(rootSchema, "DB1", ds, null, null));
+        rootSchema.add("DB1", createJdbcSchema(rootSchema, "DB1", ds, null, null));
 
         // Configure validator
         Properties props = new Properties();

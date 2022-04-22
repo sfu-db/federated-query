@@ -1,13 +1,21 @@
 package ai.dataprep.federated;
 
+import com.google.common.collect.ImmutableList;
 import org.apache.calcite.adapter.enumerable.EnumerableConvention;
+import org.apache.calcite.adapter.jdbc.JdbcConvention;
 import org.apache.calcite.adapter.jdbc.JdbcTableScan;
 import org.apache.calcite.plan.*;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelVisitor;
 import org.apache.calcite.rel.SingleRel;
 import org.apache.calcite.rel.convert.ConverterRule;
+import org.apache.calcite.rel.core.Join;
+import org.apache.calcite.rel.logical.LogicalFilter;
+import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rex.RexBuilder;
+import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexUtil;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
@@ -32,8 +40,17 @@ public class RemoteJdbcLogicalWrapper extends SingleRel {
     public static class Visitor extends RelVisitor {
         @Override public void visit(RelNode node, int ordinal, @Nullable RelNode parent) {
             if (node instanceof JdbcTableScan) {
-                RemoteJdbcLogicalWrapper wrapper = new RemoteJdbcLogicalWrapper(node.getCluster(), node);
-                parent.replaceInput(ordinal, wrapper);
+                if (parent instanceof LogicalProject || parent instanceof LogicalFilter) {
+                    return;
+                }
+                // Otherwise, add a logical project "*" to enable join associate
+                JdbcTableScan scan = (JdbcTableScan) node;
+                RexBuilder rexBuilder = node.getCluster().getRexBuilder();
+                List<RexNode> fields = rexBuilder.identityProjects(scan.getRowType());
+                LogicalProject project = LogicalProject.create(node, ImmutableList.of(), fields, scan.getRowType());
+                parent.replaceInput(ordinal, project);
+//                RemoteJdbcLogicalWrapper wrapper = new RemoteJdbcLogicalWrapper(node.getCluster(), node);
+//                parent.replaceInput(ordinal, wrapper);
             }
             else {
                 // Traverse child node
@@ -59,4 +76,25 @@ public class RemoteJdbcLogicalWrapper extends SingleRel {
             return wrapper.input;
         }
     }
+
+    public static class RemoteJdbcWrapperRule extends RemoteJdbcRules.JdbcConverterRule {
+
+        public static RemoteJdbcWrapperRule create(JdbcConvention out) {
+            return Config.INSTANCE
+                    .withConversion(RemoteJdbcLogicalWrapper.class, Convention.NONE, out, "RemoteJdbcWrapperRule")
+                    .withRuleFactory(RemoteJdbcWrapperRule::new)
+                    .toRule(RemoteJdbcWrapperRule.class);
+        }
+
+        protected RemoteJdbcWrapperRule(Config config) {
+            super(config);
+        }
+
+        @Override
+        public @Nullable RelNode convert(RelNode rel) {
+            final RemoteJdbcLogicalWrapper wrapper = (RemoteJdbcLogicalWrapper) rel;
+            return wrapper.input;
+        }
+    }
+
 }

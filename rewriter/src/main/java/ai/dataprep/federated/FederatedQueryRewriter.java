@@ -118,6 +118,11 @@ public class FederatedQueryRewriter {
                 RelOptUtil.dumpPlan("[Logical plan]", logPlan, SqlExplainFormat.TEXT,
                         SqlExplainLevel.EXPPLAN_ATTRIBUTES));
 
+        logPlan = relConverter.decorrelate(validNode, logPlan);
+        logger.debug(
+                RelOptUtil.dumpPlan("[De-correlated plan]", logPlan, SqlExplainFormat.TEXT,
+                        SqlExplainLevel.EXPPLAN_ATTRIBUTES));
+
         RemoteJdbcLogicalWrapper.Visitor wrapperVisitor = new RemoteJdbcLogicalWrapper.Visitor();
         logPlan.childrenAccept(wrapperVisitor);
         logger.debug(
@@ -133,6 +138,11 @@ public class FederatedQueryRewriter {
         planner.addRule(CoreRules.PROJECT_CORRELATE_TRANSPOSE);
         planner.addRule(CoreRules.FILTER_PROJECT_TRANSPOSE);
         planner.addRule(CoreRules.AGGREGATE_PROJECT_MERGE);
+        planner.addRule(CoreRules.PROJECT_REMOVE);
+        planner.addRule(CoreRules.PROJECT_MERGE);
+        planner.addRule(CoreRules.AGGREGATE_REMOVE);
+        planner.addRule(CoreRules.JOIN_ASSOCIATE);
+        planner.addRule(CoreRules.JOIN_COMMUTE);
 
 //        planner.addRule(CoreRules.JOIN_PROJECT_BOTH_TRANSPOSE_INCLUDE_OUTER);
 //        planner.addRule(CoreRules.JOIN_PUSH_EXPRESSIONS);
@@ -140,18 +150,14 @@ public class FederatedQueryRewriter {
 //        planner.addRule(CoreRules.PROJECT_AGGREGATE_MERGE);
 //        planner.addRule(CoreRules.AGGREGATE_PROJECT_PULL_UP_CONSTANTS);
 
-        planner.addRule(CoreRules.PROJECT_REMOVE);
-        planner.addRule(CoreRules.AGGREGATE_REMOVE);
-        planner.addRule(CoreRules.JOIN_ASSOCIATE);
-        planner.addRule(CoreRules.JOIN_COMMUTE);
         planner.addRule(EnumerableRules.ENUMERABLE_PROJECT_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_FILTER_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_JOIN_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_SORT_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_LIMIT_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_CORRELATE_RULE);
-        planner.addRule(LocalAggregateRule.DEFAULT_CONFIG.toRule()); // support distinct
-        planner.addRule(RemoteJdbcLogicalWrapper.ENUMERABLE_WRAPPER_RULE); // enable JoinAssociate on different JDBC sources
+        planner.addRule(DataFusionAggregateRule.DEFAULT_CONFIG.toRule()); // support distinct
+//        planner.addRule(RemoteJdbcLogicalWrapper.ENUMERABLE_WRAPPER_RULE); // enable JoinAssociate on different JDBC sources
         planner.addRule(ConditionRules.FilterConditionRule.FilterConfig.DEFAULT.toRule());
         planner.addRule(ConditionRules.JoinConditionRule.JoinConfig.DEFAULT.toRule());
 

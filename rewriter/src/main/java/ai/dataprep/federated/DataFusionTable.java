@@ -15,11 +15,11 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
 
-public class LocalTable implements RelOptTable {
+public class DataFusionTable implements RelOptTable {
     List<String> name;
     RelDataType rowType;
 
-    public LocalTable(List<String> name, RelDataType rowType) {
+    public DataFusionTable(List<String> name, RelDataType rowType) {
         this.name = name;
         this.rowType = rowType;
     }
