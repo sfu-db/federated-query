@@ -149,6 +149,8 @@ public class FederatedQueryRewriter {
 //        planner.addRule(CoreRules.JOIN_PUSH_TRANSITIVE_PREDICATES);
 //        planner.addRule(CoreRules.PROJECT_AGGREGATE_MERGE);
 //        planner.addRule(CoreRules.AGGREGATE_PROJECT_PULL_UP_CONSTANTS);
+//        planner.addRule(CoreRules.FILTER_PROJECT_TRANSPOSE);
+//        planner.addRule(CoreRules.AGGREGATE_FILTER_TRANSPOSE);
 
         planner.addRule(EnumerableRules.ENUMERABLE_PROJECT_RULE);
         planner.addRule(EnumerableRules.ENUMERABLE_FILTER_RULE);

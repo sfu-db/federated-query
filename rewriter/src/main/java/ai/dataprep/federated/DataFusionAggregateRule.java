@@ -8,9 +8,13 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.convert.ConverterRule;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.logical.LogicalAggregate;
+import org.apache.calcite.util.trace.CalciteTrace;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
 
 public class DataFusionAggregateRule extends ConverterRule {
+    protected static final Logger LOGGER = CalciteTrace.getPlannerTracer();
+
     static final Config DEFAULT_CONFIG = Config.INSTANCE
             .withConversion(LogicalAggregate.class, Convention.NONE,
                     EnumerableConvention.INSTANCE, "DataFusionAggregateRule")
@@ -34,7 +38,7 @@ public class DataFusionAggregateRule extends ConverterRule {
                     agg.getGroupSets(),
                     agg.getAggCallList());
         } catch (InvalidRelException e) {
-//            EnumerableRules.LOGGER.debug(e.toString());
+            LOGGER.debug(e.toString());
             return null;
         }
     }

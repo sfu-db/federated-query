@@ -16,6 +16,7 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.util.BuiltInMethod;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -49,6 +50,8 @@ public class DataFusionAggregate extends EnumerableAggregateBase implements Enum
 //                throw new InvalidRelException(
 //                        "within-distinct aggregation not supported");
 //            }
+            if (aggCall.getAggregation().getKind() == SqlKind.AVG) continue; // support AVG
+
             AggImplementor implementor2 =
                     RexImpTable.INSTANCE.get(aggCall.getAggregation(), false);
             if (implementor2 == null) {
