@@ -16,12 +16,12 @@ public class FederatedQueryRewriterTest {
         logger.info("[Input]\n{}", sql);
 
         final DataSource ds1 = JdbcSchema.dataSource(
-                "jdbc:postgresql://127.0.0.1:5432/tpchsf1",
+                "jdbc:postgresql://127.0.0.1:5432/tpch1",
                 "org.postgresql.Driver",
                 "postgres",
                 "postgres");
         final DataSource ds2 = JdbcSchema.dataSource(
-                "jdbc:postgresql://127.0.0.1:5433/tpchsf1",
+                "jdbc:postgresql://127.0.0.1:5433/tpch1",
                 "org.postgresql.Driver",
                 "postgres",
                 "postgres");
